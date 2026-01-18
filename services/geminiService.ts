@@ -3,9 +3,9 @@ import { GoogleGenAI } from "@google/genai";
 import { UserProfile, AnalysisResponse, Scheme } from "../types";
 import { dbService } from "./dbService";
 
-const SYSTEM_INSTRUCTION = `You are a world-class Indian Government Welfare Scheme Analyst.
-Deep expertise in Central and Rajasthan state schemes (Jan-Aadhar, Ration Card, TSP, 2-child policy).
-Respond in polite Hindi (Devanagari) summary followed by a JSON array of matches.
+const SYSTEM_INSTRUCTION = `You are a world-class Indian Government Welfare Scheme Analyst. 
+Analyze eligibility for Central and Rajasthan state schemes. 
+Respond in polite Hindi summary followed by a JSON array of matches.
 
 STRICT JSON OUTPUT FORMAT:
 {
@@ -46,72 +46,119 @@ function extractJson(text: string): any {
   return null;
 }
 
-async function getAIClient() {
+/**
+ * Gets the active key and provider type
+ */
+async function getActiveKey() {
   await dbService.init();
   const dbKeys = await dbService.getSetting<any>('api_keys');
   
-  const finalKey = dbKeys?.gemini?.trim() || dbKeys?.groq?.trim() || process.env.API_KEY?.trim();
+  const geminiKey = dbKeys?.gemini?.trim();
+  const groqKey = dbKeys?.groq?.trim();
+  const envKey = process.env.API_KEY?.trim();
+  
+  const finalKey = geminiKey || groqKey || envKey;
   
   if (!finalKey || finalKey === "" || finalKey === "YOUR_API_KEY") {
     throw new Error("API Key missing! Kripya Admin Panel mein API Key set karein.");
   }
-  
-  return new GoogleGenAI({ apiKey: finalKey });
+
+  // Detect Provider
+  const isGroq = finalKey.startsWith('gsk_');
+  return { key: finalKey, isGroq };
+}
+
+/**
+ * Unified request handler for both Gemini and Groq
+ */
+async function callAI(prompt: string, useSearch = false) {
+  const { key, isGroq } = await getActiveKey();
+
+  if (isGroq) {
+    // Groq API Call (OpenAI compatible)
+    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${key}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: 'llama-3.3-70b-versatile',
+        messages: [
+          { role: 'system', content: SYSTEM_INSTRUCTION },
+          { role: 'user', content: prompt }
+        ],
+        temperature: 0.1
+      })
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      if (response.status === 429) throw new Error("Groq API Limit Exhausted!");
+      if (response.status === 401 || response.status === 400) throw new Error("Invalid Groq API Key! Please check your key in Admin panel.");
+      throw new Error(error?.error?.message || "Groq API Error");
+    }
+
+    const data = await response.json();
+    return { text: data.choices[0].message.content, groundingSources: [] };
+  } else {
+    // Gemini SDK Call
+    const ai = new GoogleGenAI({ apiKey: key });
+    try {
+      const response = await ai.models.generateContent({
+        model: 'gemini-3-flash-preview',
+        contents: prompt,
+        config: { 
+          systemInstruction: SYSTEM_INSTRUCTION, 
+          tools: useSearch ? [{ googleSearch: {} }] : [],
+          temperature: 0.1 
+        },
+      });
+
+      return { 
+        text: response.text || "", 
+        groundingSources: response.candidates?.[0]?.groundingMetadata?.groundingChunks || [] 
+      };
+    } catch (err: any) {
+      const errMsg = err.message || "";
+      if (errMsg.includes("429") || errMsg.includes("quota")) throw new Error("Gemini API Limit Exhausted!");
+      if (errMsg.includes("400")) throw new Error("Invalid Gemini API Key! Please check your key in Admin panel.");
+      throw err;
+    }
+  }
 }
 
 export async function analyzeEligibility(profile: UserProfile): Promise<AnalysisResponse> {
-  const ai = await getAIClient();
   const localSchemes = await dbService.getAllSchemes();
   const dbNames = localSchemes.map(s => s.yojana_name).join(", ");
 
   const prompt = `Analyze eligibility for: ${JSON.stringify(profile)}. 
-  Database Context: ${dbNames}.
+  Database Context (Previously fetched): ${dbNames}.
   Output Hindi summary and JSON array inside ---JSON_START--- and ---JSON_END--- tags.`;
 
   try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview', // Flash is 3x faster than Pro
-      contents: prompt,
-      config: { 
-        systemInstruction: SYSTEM_INSTRUCTION, 
-        tools: [{ googleSearch: {} }],
-        temperature: 0.1 // Low temperature for faster deterministic response
-      },
-    });
-
-    const text = response.text || "";
+    const { text, groundingSources } = await callAI(prompt, true);
     const extracted = extractJson(text);
     const eligible_schemes = extracted?.eligible_schemes || (Array.isArray(extracted) ? extracted : []);
 
     const result = {
       hindiContent: text.split(/---JSON_START---|```json|\[/)[0].trim(),
       eligible_schemes,
-      groundingSources: response.candidates?.[0]?.groundingMetadata?.groundingChunks || []
+      groundingSources: groundingSources
     };
 
     await dbService.saveAppData('last_result', result);
     return result;
   } catch (err: any) {
-    const errMsg = err.message || "";
-    if (errMsg.includes("429") || errMsg.includes("quota") || errMsg.includes("exhausted")) {
-      throw new Error("API Limit khatam ho gayi hai (Data Exhausted)! Kripya doosri API Key use karein ya thodi der baad try karein.");
-    }
-    throw new Error(errMsg || "AI analysis fail ho gaya.");
+    throw new Error(err.message || "AI analysis fail ho gaya.");
   }
 }
 
 export async function fetchMasterSchemes(category: 'Central' | 'Rajasthan'): Promise<Scheme[]> {
-  const ai = await getAIClient();
   const prompt = `List 15 updated ${category} welfare schemes 2024-2025. Output only JSON array.`;
 
   try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
-      contents: prompt,
-      config: { systemInstruction: SYSTEM_INSTRUCTION, tools: [{ googleSearch: {} }] },
-    });
-
-    const text = response.text || "";
+    const { text } = await callAI(prompt, true);
     const fetched = extractJson(text);
     
     if (Array.isArray(fetched)) {
@@ -120,7 +167,6 @@ export async function fetchMasterSchemes(category: 'Central' | 'Rajasthan'): Pro
     }
     throw new Error("Invalid response format.");
   } catch (err: any) {
-    if (err.message.includes("429")) throw new Error("API Limit Exhausted!");
     throw err;
   }
 }

@@ -1,5 +1,5 @@
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { UserProfile, AnalysisResponse, Scheme, AuthState } from './types';
 import { 
   RAJASTHAN_DISTRICTS, 
@@ -28,7 +28,7 @@ const SchemeCard: React.FC<{ scheme: Scheme; isBookmarked: boolean; onToggle: ()
             <span className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase tracking-wider ${scheme.government.includes('Rajasthan') ? 'bg-orange-600 text-white' : 'bg-blue-600 text-white'}`}>
               {scheme.government}
             </span>
-            <span className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase bg-slate-100 text-slate-500`}>{scheme.scheme_status}</span>
+            <span className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase bg-slate-100 text-slate-500`}>{scheme.scheme_status || 'ACTIVE'}</span>
           </div>
           <h3 className="text-base font-black text-slate-800 leading-tight">{scheme.yojana_name}</h3>
           <p className="text-xs text-slate-500 mt-1 line-clamp-1">{scheme.short_purpose_hindi}</p>
@@ -59,7 +59,7 @@ const SchemeCard: React.FC<{ scheme: Scheme; isBookmarked: boolean; onToggle: ()
               </div>
             </div>
             <div className="flex gap-2 pt-2">
-              <a href={scheme.online_apply_link} target="_blank" rel="noreferrer" className="flex-1 bg-orange-600 text-white py-2.5 rounded-xl text-[10px] font-black text-center shadow-lg hover:bg-orange-700">Apply Online</a>
+              <a href={scheme.online_apply_link} target="_blank" rel="noreferrer" className="flex-1 bg-orange-600 text-white py-2.5 rounded-xl text-[10px] font-black text-center shadow-lg hover:bg-orange-700 transition-transform active:scale-95">Apply Online</a>
             </div>
           </div>
         </div>
@@ -117,7 +117,7 @@ const App: React.FC = () => {
       if (profile.is_tsp_area !== 'No') setProfile(p => ({ ...p, is_tsp_area: 'No' }));
     }
     dbService.saveAppData('profile', profile);
-  }, [profile]);
+  }, [profile.district, profile.state]);
 
   const handleAnalyze = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -128,7 +128,9 @@ const App: React.FC = () => {
       setTimeout(() => resultRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
     } catch (err: any) {
       alert(err.message);
-      if (err.message.includes("API Key") || err.message.includes("Limit")) setActiveTab('admin');
+      if (err.message.toLowerCase().includes("key") || err.message.toLowerCase().includes("limit")) {
+        setActiveTab('admin');
+      }
     }
     setLoading(false);
   };
@@ -145,22 +147,35 @@ const App: React.FC = () => {
     localStorage.setItem('scheme_bookmarks', JSON.stringify(newMarks));
   };
 
+  // Performance optimization: prevent re-rendering card list unnecessarily
+  const renderedSchemes = useMemo(() => {
+    if (!result) return null;
+    return result.eligible_schemes.map((s, idx) => (
+      <SchemeCard 
+        key={`${s.yojana_name}-${idx}`} 
+        scheme={s} 
+        isBookmarked={bookmarks.includes(s.yojana_name)} 
+        onToggle={() => handleBookmark(s.yojana_name)} 
+      />
+    ));
+  }, [result, bookmarks]);
+
   return (
-    <div className="min-h-screen bg-[#FDFDFD] font-sans">
+    <div className="min-h-screen bg-[#FDFDFD] font-sans selection:bg-orange-100">
       <header className="bg-white/90 backdrop-blur-md border-b border-slate-100 sticky top-0 z-50 py-3 px-4">
         <div className="max-w-6xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-3">
-             <div className="w-10 h-10 bg-orange-600 rounded-xl flex items-center justify-center text-xl shadow-lg">🇮🇳</div>
+             <div className="w-10 h-10 bg-orange-600 rounded-xl flex items-center justify-center text-xl shadow-lg ring-4 ring-orange-50">🇮🇳</div>
              <div>
                <h1 className="text-lg font-black text-slate-800 leading-none">Sarkari Yojana AI</h1>
-               <p className="text-[10px] font-black text-orange-600 uppercase tracking-widest mt-1">Smart Analytics</p>
+               <p className="text-[10px] font-black text-orange-600 uppercase tracking-widest mt-1">Smart Analytics Engine</p>
              </div>
           </div>
           <nav className="flex bg-slate-100 p-1 rounded-2xl gap-1">
             {['check', 'browse', 'saved', 'admin'].map(id => (
               <button 
                 key={id} onClick={() => setActiveTab(id as any)}
-                className={`px-4 py-2 rounded-xl font-black text-[10px] uppercase transition-all ${activeTab === id ? 'bg-white text-orange-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+                className={`px-4 py-2 rounded-xl font-black text-[10px] uppercase transition-all duration-200 ${activeTab === id ? 'bg-white text-orange-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
               >
                 {id === 'check' ? 'पात्रता' : id === 'browse' ? 'योजनाएं' : id === 'saved' ? 'पसंदीदा' : 'Admin'}
               </button>
@@ -173,83 +188,99 @@ const App: React.FC = () => {
         {activeTab === 'check' && (
           <div className="space-y-8">
              {!result && !loading && (
-               <form onSubmit={handleAnalyze} className="bg-white p-8 rounded-[2rem] shadow-xl border border-slate-50 space-y-8 animate-slide-up">
+               <form onSubmit={handleAnalyze} className="bg-white p-8 rounded-[2.5rem] shadow-2xl shadow-orange-100/20 border border-slate-50 space-y-8 animate-slide-up">
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
                     <FormSection title="प्रोफाइल" icon="👤">
                       <div className="grid grid-cols-2 gap-4">
                         <label className="block">
-                          <span className="text-[10px] font-black text-slate-400 uppercase">लिंग</span>
-                          <select value={profile.gender} onChange={e => setProfile({...profile, gender: e.target.value})} className="w-full mt-1 p-3 bg-slate-50 border-0 rounded-xl font-bold text-xs">
+                          <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">लिंग</span>
+                          <select value={profile.gender} onChange={e => setProfile({...profile, gender: e.target.value})} className="w-full mt-1 p-3 bg-slate-50 border-0 rounded-xl font-bold text-xs ring-1 ring-slate-100 focus:ring-2 focus:ring-orange-500 transition-all">
                             {GENDER.map(g => <option key={g} value={g}>{g}</option>)}
                           </select>
                         </label>
                         <label className="block">
-                          <span className="text-[10px] font-black text-slate-400 uppercase">आयु</span>
-                          <input type="number" value={profile.age} onChange={e => setProfile({...profile, age: e.target.value})} className="w-full mt-1 p-3 bg-slate-50 border-0 rounded-xl font-bold text-xs" />
+                          <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">आयु</span>
+                          <input type="number" value={profile.age} onChange={e => setProfile({...profile, age: e.target.value})} className="w-full mt-1 p-3 bg-slate-50 border-0 rounded-xl font-bold text-xs ring-1 ring-slate-100 focus:ring-2 focus:ring-orange-500 transition-all" />
                         </label>
                       </div>
                       <label className="block">
-                        <span className="text-[10px] font-black text-slate-400 uppercase">लाभार्थी प्रकार</span>
-                        <select value={profile.beneficiary_type} onChange={e => setProfile({...profile, beneficiary_type: e.target.value})} className="w-full mt-1 p-3 bg-slate-50 border-0 rounded-xl font-bold text-xs">
+                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">लाभार्थी प्रकार</span>
+                        <select value={profile.beneficiary_type} onChange={e => setProfile({...profile, beneficiary_type: e.target.value})} className="w-full mt-1 p-3 bg-slate-50 border-0 rounded-xl font-bold text-xs ring-1 ring-slate-100">
                           {BENEFICIARY_TYPES.map(b => <option key={b} value={b}>{b}</option>)}
                         </select>
                       </label>
                       <label className="block">
-                        <span className="text-[10px] font-black text-slate-400 uppercase">शिक्षा का स्तर</span>
-                        <select value={profile.education} onChange={e => setProfile({...profile, education: e.target.value})} className="w-full mt-1 p-3 bg-slate-50 border-0 rounded-xl font-bold text-xs">
+                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">शिक्षा का स्तर</span>
+                        <select value={profile.education} onChange={e => setProfile({...profile, education: e.target.value})} className="w-full mt-1 p-3 bg-slate-50 border-0 rounded-xl font-bold text-xs ring-1 ring-slate-100">
                           {EDUCATION_LEVELS.map(ed => <option key={ed} value={ed}>{ed}</option>)}
                         </select>
                       </label>
                     </FormSection>
 
                     <FormSection title="स्थान" icon="📍">
-                      <select value={profile.district} onChange={e => setProfile({...profile, district: e.target.value})} className="w-full p-3 bg-slate-50 border-0 rounded-xl font-bold text-xs">
-                        {RAJASTHAN_DISTRICTS.map(d => <option key={d} value={d}>{d}</option>)}
-                      </select>
+                      <label className="block">
+                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">जिला (District)</span>
+                        <select value={profile.district} onChange={e => setProfile({...profile, district: e.target.value})} className="w-full mt-1 p-3 bg-slate-50 border-0 rounded-xl font-bold text-xs ring-1 ring-slate-100">
+                          {RAJASTHAN_DISTRICTS.map(d => <option key={d} value={d}>{d}</option>)}
+                        </select>
+                      </label>
                       <div className="grid grid-cols-2 gap-4">
-                        <div className="p-3 bg-slate-100 rounded-xl text-[10px] font-black text-orange-600 text-center">TSP: {profile.is_tsp_area}</div>
-                        <select value={profile.jan_aadhar_status} onChange={e => setProfile({...profile, jan_aadhar_status: e.target.value})} className="w-full p-3 bg-slate-50 border-0 rounded-xl font-bold text-xs">
+                        <div className="p-3 bg-slate-100 rounded-xl text-[10px] font-black text-orange-600 text-center flex items-center justify-center border border-slate-200">TSP: {profile.is_tsp_area}</div>
+                        <select value={profile.jan_aadhar_status} onChange={e => setProfile({...profile, jan_aadhar_status: e.target.value})} className="w-full p-3 bg-slate-50 border-0 rounded-xl font-bold text-xs ring-1 ring-slate-100">
                           <option value="Yes">JanAadhar: Yes</option>
                           <option value="No">JanAadhar: No</option>
                         </select>
                       </div>
                     </FormSection>
 
-                    <FormSection title="परिवार" icon="💰">
+                    <FormSection title="परिवार एवं आय" icon="💰">
                        <div className="grid grid-cols-2 gap-4">
-                          <input type="number" placeholder="बच्चे (Pre-2002)" value={profile.children_before_2002} onChange={e => setProfile({...profile, children_before_2002: e.target.value})} className="w-full p-3 bg-slate-50 border-0 rounded-xl font-bold text-xs" />
-                          <input type="number" placeholder="बच्चे (Post-2002)" value={profile.children_after_2002} onChange={e => setProfile({...profile, children_after_2002: e.target.value})} className="w-full p-3 bg-slate-50 border-0 rounded-xl font-bold text-xs" />
+                          <label className="block">
+                            <span className="text-[9px] font-black text-slate-400 uppercase">बच्चे (Pre-2002)</span>
+                            <input type="number" value={profile.children_before_2002} onChange={e => setProfile({...profile, children_before_2002: e.target.value})} className="w-full mt-1 p-3 bg-slate-50 border-0 rounded-xl font-bold text-xs ring-1 ring-slate-100" />
+                          </label>
+                          <label className="block">
+                            <span className="text-[9px] font-black text-slate-400 uppercase">बच्चे (Post-2002)</span>
+                            <input type="number" value={profile.children_after_2002} onChange={e => setProfile({...profile, children_after_2002: e.target.value})} className="w-full mt-1 p-3 bg-slate-50 border-0 rounded-xl font-bold text-xs ring-1 ring-slate-100" />
+                          </label>
                        </div>
-                       <input type="number" placeholder="वार्षिक आय" value={profile.income} onChange={e => setProfile({...profile, income: e.target.value})} className="w-full p-3 bg-slate-50 border-0 rounded-xl font-bold text-xs" />
+                       <label className="block">
+                          <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">वार्षिक आय (Annual Income)</span>
+                          <input type="number" value={profile.income} onChange={e => setProfile({...profile, income: e.target.value})} className="w-full mt-1 p-3 bg-slate-50 border-0 rounded-xl font-bold text-xs ring-1 ring-slate-100" />
+                       </label>
                     </FormSection>
                   </div>
-                  <button type="submit" className="w-full py-5 bg-orange-600 text-white font-black rounded-3xl shadow-lg uppercase tracking-widest text-sm transition-transform active:scale-95">
+                  <button type="submit" className="w-full py-5 bg-orange-600 text-white font-black rounded-3xl shadow-xl shadow-orange-600/20 uppercase tracking-[0.2em] text-sm transition-all active:scale-95 hover:bg-orange-700">
                     पात्र योजनाएं खोजें 🔍
                   </button>
                </form>
              )}
 
              {loading && (
-               <div className="py-20 text-center space-y-4">
-                  <div className="w-12 h-12 border-4 border-orange-100 border-t-orange-600 rounded-full animate-spin mx-auto"></div>
-                  <p className="font-black text-slate-400 uppercase text-[10px] tracking-widest">Fast data fetch in progress...</p>
+               <div className="py-20 text-center space-y-6">
+                  <div className="w-16 h-16 border-4 border-orange-100 border-t-orange-600 rounded-full animate-spin mx-auto shadow-inner"></div>
+                  <div className="space-y-2">
+                    <p className="font-black text-slate-800 uppercase text-xs tracking-widest">Analysis In Progress</p>
+                    <p className="text-[10px] text-slate-400 font-bold">Fast-fetching latest government data...</p>
+                  </div>
                </div>
              )}
 
              {result && !loading && (
                <div ref={resultRef} className="space-y-8 animate-slide-up">
-                 <div className="bg-white p-8 rounded-[2rem] shadow-xl border border-slate-100">
+                 <div className="bg-white p-8 rounded-[2.5rem] shadow-xl border border-slate-100">
                    <div className="flex items-center justify-between mb-8">
-                     <h2 className="text-xl font-black text-slate-800">पात्र योजनाएं ({result.eligible_schemes.length})</h2>
-                     <button onClick={() => setResult(null)} className="text-[10px] font-black text-orange-600 bg-orange-50 px-4 py-2 rounded-xl">नया सर्च</button>
+                     <div>
+                       <h2 className="text-xl font-black text-slate-800">पात्र योजनाएं ({result.eligible_schemes.length})</h2>
+                       <p className="text-[10px] text-slate-400 font-black uppercase tracking-widest mt-1">AI Match Summary</p>
+                     </div>
+                     <button onClick={() => setResult(null)} className="text-[10px] font-black text-orange-600 bg-orange-50 px-5 py-2.5 rounded-2xl transition-all hover:bg-orange-100 active:scale-95">नया सर्च 🔄</button>
                    </div>
-                   <div className="bg-slate-50 p-6 rounded-2xl mb-8 text-sm text-slate-700 leading-relaxed font-medium">
+                   <div className="bg-slate-50 p-6 rounded-3xl mb-8 text-sm text-slate-700 leading-relaxed font-medium border border-slate-100 shadow-inner">
                       {result.hindiContent}
                    </div>
-                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      {result.eligible_schemes.map((s, idx) => (
-                        <SchemeCard key={idx} scheme={s} isBookmarked={bookmarks.includes(s.yojana_name)} onToggle={() => handleBookmark(s.yojana_name)} />
-                      ))}
+                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      {renderedSchemes}
                    </div>
                  </div>
                </div>
@@ -260,43 +291,66 @@ const App: React.FC = () => {
         {activeTab === 'admin' && (
           <div className="max-w-2xl mx-auto space-y-8">
              {!auth.isAuthenticated ? (
-               <div className="bg-white p-10 rounded-[2.5rem] shadow-xl border border-slate-50 text-center space-y-8">
-                  <h2 className="text-xl font-black text-slate-800">Admin Login</h2>
+               <div className="bg-white p-12 rounded-[3rem] shadow-2xl border border-slate-50 text-center space-y-8">
+                  <div className="w-20 h-20 bg-orange-50 rounded-3xl flex items-center justify-center mx-auto text-3xl shadow-inner">🔒</div>
+                  <div>
+                    <h2 className="text-2xl font-black text-slate-800">Admin Login</h2>
+                    <p className="text-[10px] text-slate-400 font-black uppercase tracking-widest mt-2">Protected System Access</p>
+                  </div>
                   <form onSubmit={(e) => {
                     e.preventDefault();
                     if(loginForm.email === 'yadavnagji@gmail.com' && loginForm.password === '123456') {
                       setAuth({ isAuthenticated: true, user: 'Nagji Yadav' });
-                    } else { alert("Login failed!"); }
+                    } else { alert("Login failed! Invalid credentials."); }
                   }} className="space-y-4">
-                    <input type="email" required value={loginForm.email} onChange={e => setLoginForm({...loginForm, email: e.target.value})} className="w-full p-4 bg-slate-50 rounded-2xl border-0 font-bold text-xs" placeholder="Email" />
-                    <input type="password" required value={loginForm.password} onChange={e => setLoginForm({...loginForm, password: e.target.value})} className="w-full p-4 bg-slate-50 rounded-2xl border-0 font-bold text-xs" placeholder="Password" />
-                    <button type="submit" className="w-full py-4 bg-orange-600 text-white font-black rounded-2xl shadow-lg">Login</button>
+                    <input type="email" required value={loginForm.email} onChange={e => setLoginForm({...loginForm, email: e.target.value})} className="w-full p-4 bg-slate-50 rounded-2xl border-0 font-bold text-xs ring-1 ring-slate-100 focus:ring-2 focus:ring-orange-500 transition-all" placeholder="Email" />
+                    <input type="password" required value={loginForm.password} onChange={e => setLoginForm({...loginForm, password: e.target.value})} className="w-full p-4 bg-slate-50 rounded-2xl border-0 font-bold text-xs ring-1 ring-slate-100 focus:ring-2 focus:ring-orange-500 transition-all" placeholder="Password" />
+                    <button type="submit" className="w-full py-4 bg-orange-600 text-white font-black rounded-2xl shadow-xl shadow-orange-600/20 active:scale-95 transition-all">Access Dashboard</button>
                   </form>
                </div>
              ) : (
-               <div className="bg-white p-10 rounded-[2.5rem] shadow-xl border border-slate-50 space-y-8 animate-slide-up">
-                  <div className="flex items-center justify-between border-b pb-6">
-                     <h2 className="text-xl font-black text-slate-800">API Settings</h2>
-                     <button onClick={() => setAuth({isAuthenticated: false, user: null})} className="text-[10px] font-black text-slate-400 uppercase">Logout</button>
+               <div className="bg-white p-10 rounded-[3rem] shadow-2xl border border-slate-50 space-y-10 animate-slide-up">
+                  <div className="flex items-center justify-between border-b border-slate-50 pb-6">
+                     <div>
+                       <h2 className="text-xl font-black text-slate-800">API Settings</h2>
+                       <p className="text-[10px] text-orange-600 font-black uppercase tracking-widest mt-1">System Configuration</p>
+                     </div>
+                     <button onClick={() => setAuth({isAuthenticated: false, user: null})} className="text-[10px] font-black text-slate-400 uppercase px-4 py-2 rounded-xl bg-slate-50 hover:bg-slate-100">Logout</button>
                   </div>
-                  <div className="space-y-6">
-                     <input type="password" value={apiKeys.gemini} onChange={e => setApiKeys({...apiKeys, gemini: e.target.value})} className="w-full p-4 bg-slate-50 rounded-2xl border-0 font-mono text-xs" placeholder="Gemini API Key (Box 1)" />
-                     <input type="password" value={apiKeys.groq} onChange={e => setApiKeys({...apiKeys, groq: e.target.value})} className="w-full p-4 bg-slate-50 rounded-2xl border-0 font-mono text-xs" placeholder="Groq API Key (Box 2)" />
-                     <button onClick={saveConfig} className="w-full py-4 bg-slate-900 text-white font-black rounded-2xl text-[10px] uppercase tracking-widest shadow-xl relative overflow-hidden">
-                       Save API Keys
+                  <div className="space-y-8">
+                     <div className="space-y-4">
+                        <label className="block">
+                          <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Gemini API Key (Box 1)</span>
+                          <input type="password" value={apiKeys.gemini} onChange={e => setApiKeys({...apiKeys, gemini: e.target.value})} className="w-full mt-2 p-4 bg-slate-50 rounded-2xl border-0 font-mono text-xs ring-1 ring-slate-100" placeholder="Paste Gemini Key here" />
+                        </label>
+                        <label className="block">
+                          <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Groq API Key (Box 2)</span>
+                          <input type="password" value={apiKeys.groq} onChange={e => setApiKeys({...apiKeys, groq: e.target.value})} className="w-full mt-2 p-4 bg-slate-50 rounded-2xl border-0 font-mono text-xs ring-1 ring-slate-100" placeholder="Paste Groq Key here (gsk_...)" />
+                          <p className="text-[9px] text-slate-400 font-bold mt-2">Note: Box 1 prioritize kiya jayega. Dono keys database mein permanent save rahengi.</p>
+                        </label>
+                     </div>
+                     <button onClick={saveConfig} className="w-full py-5 bg-slate-900 text-white font-black rounded-2xl text-[11px] uppercase tracking-[0.3em] shadow-2xl relative overflow-hidden transition-all active:scale-95">
+                       Lock Keys in Database
                        {showSavedMsg && (
-                         <span className="absolute inset-0 bg-green-600 flex items-center justify-center animate-in fade-in zoom-in duration-300">
+                         <div className="absolute inset-0 bg-green-600 flex items-center justify-center animate-in fade-in zoom-in duration-300">
                            SAVED (सुरक्षित हो गया) ✅
-                         </span>
+                         </div>
                        )}
                      </button>
-                     <button onClick={() => fetchMasterSchemes('Rajasthan')} className="w-full py-3 bg-blue-50 text-blue-600 font-black rounded-xl text-[10px] uppercase">Master List Update</button>
+                     <div className="pt-6 border-t border-slate-50 space-y-4">
+                        <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Data Maintenance</h3>
+                        <button onClick={() => fetchMasterSchemes('Rajasthan').then(() => alert("Master List Updated!"))} className="w-full py-4 bg-blue-50 text-blue-600 font-black rounded-2xl text-[10px] uppercase tracking-widest hover:bg-blue-100 transition-all">Force Refresh Rajasthan List 🔄</button>
+                     </div>
                   </div>
                </div>
              )}
           </div>
         )}
       </main>
+      
+      <footer className="py-12 text-center">
+        <p className="text-[9px] font-black text-slate-300 uppercase tracking-[0.5em]">Sarkari Yojana AI • Smart Welfare Analysis v4.5</p>
+      </footer>
     </div>
   );
 };
