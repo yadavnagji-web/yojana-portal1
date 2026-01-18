@@ -1,4 +1,3 @@
-
 import { GoogleGenAI } from "@google/genai";
 import { UserProfile, AnalysisResponse, Scheme } from "../types";
 import { dbService } from "./dbService";
@@ -6,6 +5,7 @@ import { dbService } from "./dbService";
 const SYSTEM_INSTRUCTION = `You are an expert Indian Government Welfare Scheme Analyst.
 Analyze user profiles against Central and Rajasthan state schemes.
 PRIORITY: Rajasthan Govt > Central Govt. Focus on TSP/Tribal areas for Rajasthan.
+DATABASE PRIORITY: Use the provided scheme context as the primary source of truth.
 
 STRICT JSON OUTPUT FORMAT FOR SCHEMES:
 {
@@ -29,18 +29,18 @@ Respond in simple Hindi for the content part. Use bullet points.`;
 
 async function getAIClient() {
   // Check browser-level database first
-  const dbKeys = await dbService.getSetting<{ gemini: string }>('api_keys');
+  const dbKeys = await dbService.getSetting<{ gemini: string; groq: string }>('api_keys');
   const apiKey = dbKeys?.gemini || process.env.API_KEY;
   
   if (!apiKey || apiKey.trim() === "") {
-    throw new Error("API Key set nahi hai. Kripya Admin Panel mein API Key darj karein.");
+    throw new Error("API Key missing! Kripya Admin Panel mein API Key set karein.");
   }
   return new GoogleGenAI({ apiKey });
 }
 
 export async function fetchMasterSchemes(category: 'Central' | 'Rajasthan'): Promise<Scheme[]> {
   const ai = await getAIClient();
-  const prompt = `2024-2025 ki pramukh ${category} sarkari yojanaon ki list nikaalein. Output only JSON array.`;
+  const prompt = `Perform extensive search for 2024-2025 ${category} government welfare schemes. Output only a raw JSON array of objects.`;
 
   try {
     const response = await ai.models.generateContent({
@@ -68,24 +68,27 @@ export async function fetchMasterSchemes(category: 'Central' | 'Rajasthan'): Pro
 export async function analyzeEligibility(profile: UserProfile): Promise<AnalysisResponse> {
   const ai = await getAIClient();
   const localSchemes = await dbService.getAllSchemes();
-  const context = localSchemes.map(s => s.yojana_name).join(", ");
+  // Using local database as primary context
+  const context = localSchemes.map(s => JSON.stringify({ name: s.yojana_name, eligibility: s.eligibility })).join("\n");
 
   const prompt = `
-  Analyze eligibility for: ${JSON.stringify(profile)}
-  Context: ${context}
+  Analyze eligibility for User Profile: ${JSON.stringify(profile)}
   
-  User Specifics:
-  - Jan-Aadhar: ${profile.jan_aadhar_status}
-  - Ration Card: ${profile.ration_card_type}
-  - Pension: ${profile.pension_status}
-  - Children: ${profile.children_before_2002} (Pre-2002), ${profile.children_after_2002} (Post-2002)
-  - Student Status: ${profile.parent_status} / ${profile.current_class}
+  Local Database Schemes for Context:
+  ${context}
   
-  Find matched schemes. Return format:
+  Special Logical Checks:
+  - Is the user in a TSP area? ${profile.is_tsp_area}
+  - Jan-Aadhar status: ${profile.jan_aadhar_status}
+  - Children counts: ${profile.children_before_2002} (Pre-2002), ${profile.children_after_2002} (Post-2002)
+  - Student status: ${profile.parent_status} / Course: ${profile.current_class}
+  
+  Find matched schemes from database first, then use web search for missing updates.
+  Return format:
   ---JSON_START---
   { "eligible_schemes": [...] }
   ---JSON_END---
-  Summary in Hindi before JSON.`;
+  Hindi explanation before JSON.`;
 
   try {
     const response = await ai.models.generateContent({
@@ -120,7 +123,7 @@ export async function analyzeEligibility(profile: UserProfile): Promise<Analysis
 
 export async function proposeSystemImprovement(): Promise<string> {
   const ai = await getAIClient();
-  const prompt = `System improvements for Welfare AI. Analyze logic and suggest one optimization with code.`;
+  const prompt = `Analyze logic of the current Welfare System and suggest code-level improvements.`;
   const response = await ai.models.generateContent({
     model: 'gemini-3-flash-preview',
     contents: prompt,
