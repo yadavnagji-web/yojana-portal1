@@ -1,135 +1,47 @@
+
 <!DOCTYPE html>
 <html lang="hi">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Sarkari Yojana Analyst</title>
+  <title>Sarkari Yojana Analyst - Smart Welfare AI</title>
 
-  <!-- Tailwind -->
+  <!-- Tailwind CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
 
   <!-- Fonts -->
-  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Devanagari:wght@400;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Devanagari:wght@400;700;900&family=Inter:wght@400;600;700;900&display=swap" rel="stylesheet">
 
   <style>
-    body { font-family: 'Inter','Noto Sans Devanagari',sans-serif; }
-  </style>
-
-  <!-- Import Maps -->
-  <script type="importmap">
-  {
-    "imports": {
-      "react": "https://esm.sh/react@19.2.3",
-      "react-dom/client": "https://esm.sh/react-dom@19.2.3/client"
+    body { 
+      font-family: 'Inter', 'Noto Sans Devanagari', sans-serif; 
+      -webkit-font-smoothing: antialiased;
     }
+    .scrollbar-hide::-webkit-scrollbar { display: none; }
+    @keyframes slide-up {
+      from { transform: translateY(20px); opacity: 0; }
+      to { transform: translateY(0); opacity: 1; }
+    }
+    .animate-slide-up { animation: slide-up 0.5s ease-out forwards; }
+  </style>
+<script type="importmap">
+{
+  "imports": {
+    "react": "https://esm.sh/react@^19.2.3",
+    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
+    "react/": "https://esm.sh/react@^19.2.3/",
+    "@google/genai": "https://esm.sh/@google/genai@^1.37.0",
+    "vite": "https://esm.sh/vite@^7.3.1",
+    "@vitejs/plugin-react": "https://esm.sh/@vitejs/plugin-react@^5.1.2"
   }
-  </script>
+}
+</script>
 </head>
 
-<body class="bg-slate-100 min-h-screen">
+<body class="bg-[#FDFDFD] min-h-screen text-slate-900">
   <div id="root"></div>
 
-  <!-- React App -->
-  <script type="module">
-    import React, { useState } from "react";
-    import { createRoot } from "react-dom/client";
-
-    function App() {
-      const [form, setForm] = useState({
-        age: "",
-        income: "",
-        state: "Rajasthan",
-        category: "General",
-        gender: "Male",
-        student: "No"
-      });
-
-      const [result, setResult] = useState("");
-
-      const handleChange = (e) => {
-        setForm({ ...form, [e.target.name]: e.target.value });
-      };
-
-      const analyze = () => {
-        // AI placeholder logic (Gemini API yahan connect hoga)
-        let output = "आप निम्न योजनाओं के लिए पात्र हो सकते हैं:\n\n";
-
-        if (form.income && form.income < 250000) {
-          output += "✅ प्रधानमंत्री आवास योजना\n";
-          output += "✅ आयुष्मान भारत योजना\n";
-        }
-
-        if (form.student === "Yes") {
-          output += "✅ छात्रवृत्ति योजना\n";
-        }
-
-        if (form.state === "Rajasthan") {
-          output += "✅ राजस्थान पालनहार योजना\n";
-        }
-
-        setResult(output);
-      };
-
-      return (
-        React.createElement("div", { className: "max-w-3xl mx-auto p-6" },
-
-          React.createElement("h1", {
-            className: "text-3xl font-bold text-center text-green-700"
-          }, "Sarkari Yojana Analyst 🇮🇳"),
-
-          React.createElement("p", {
-            className: "text-center text-gray-600 mt-2"
-          }, "अपनी जानकारी भरें और पात्र योजनाएँ जानें"),
-
-          React.createElement("div", { className: "bg-white shadow-lg rounded-xl p-6 mt-6 space-y-4" },
-
-            input("age","आयु","number",form,handleChange),
-            input("income","वार्षिक आय","number",form,handleChange),
-
-            select("state","राज्य",["Rajasthan","MP","UP","Bihar"],form,handleChange),
-            select("category","वर्ग",["General","OBC","SC","ST"],form,handleChange),
-            select("gender","लिंग",["Male","Female"],form,handleChange),
-            select("student","छात्र",["Yes","No"],form,handleChange),
-
-            React.createElement("button", {
-              onClick: analyze,
-              className: "w-full bg-green-600 text-white py-2 rounded-lg hover:bg-green-700"
-            }, "AI से विश्लेषण करें")
-          ),
-
-          result && React.createElement("pre", {
-            className: "bg-black text-green-400 p-4 mt-6 rounded-lg whitespace-pre-wrap"
-          }, result)
-        )
-      );
-    }
-
-    function input(name,label,type,form,onChange){
-      return React.createElement("div", {},
-        React.createElement("label",{className:"block font-medium"},label),
-        React.createElement("input",{
-          name,type,value:form[name],onChange,
-          className:"w-full border rounded p-2 mt-1"
-        })
-      )
-    }
-
-    function select(name,label,options,form,onChange){
-      return React.createElement("div", {},
-        React.createElement("label",{className:"block font-medium"},label),
-        React.createElement("select",{
-          name,value:form[name],onChange,
-          className:"w-full border rounded p-2 mt-1"
-        },
-          options.map(o =>
-            React.createElement("option",{key:o,value:o},o)
-          )
-        )
-      )
-    }
-
-    createRoot(document.getElementById("root"))
-      .render(React.createElement(App));
-  </script>
+  <!-- Entry Point for the React App -->
+  <script type="module" src="/index.tsx"></script>
 </body>
 </html>

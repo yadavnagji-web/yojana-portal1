@@ -1,7 +1,7 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { UserProfile, AnalysisResponse, Scheme, AuthState, AIAgentLog } from './types';
-import { RAJASTHAN_DISTRICTS, CATEGORIES, BENEFICIARY_TYPES, GENDER, MARITAL_STATUS, AREA_TYPE, YES_NO } from './constants';
+import { RAJASTHAN_DISTRICTS, TSP_DISTRICTS, CATEGORIES, BENEFICIARY_TYPES, GENDER, MARITAL_STATUS, AREA_TYPE, YES_NO } from './constants';
 import FormSection from './components/FormSection';
 import { analyzeEligibility, fetchMasterSchemes, proposeSystemImprovement } from './services/geminiService';
 import { dbService } from './services/dbService';
@@ -66,7 +66,7 @@ const SchemeCard: React.FC<{ scheme: Scheme; isBookmarked: boolean; onToggle: ()
 const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'check' | 'browse' | 'saved' | 'admin'>('check');
   const [profile, setProfile] = useState<UserProfile>({
-    gender: 'Female', age: '30', marital_status: 'Widowed', state: 'Rajasthan', district: 'Udaipur', rural_or_urban: 'Tribal', is_tsp_area: 'Yes',
+    gender: 'Female', age: '30', marital_status: 'Widowed', state: 'Rajasthan', district: 'Udaipur', rural_or_urban: 'Rural', is_tsp_area: 'Yes',
     category: 'ST', beneficiary_type: 'Widow', minority: 'No', disability: 'No', disability_percent: '0', income: '60000', bpl: 'Yes',
     education: 'Primary', occupation: 'Laborer', labour_card: 'Yes', pregnant: 'No', lactating: 'No', family_count: '4', head_of_family: 'Yes'
   });
@@ -84,6 +84,17 @@ const App: React.FC = () => {
 
   const resultRef = useRef<HTMLDivElement>(null);
 
+  // Logical Filtering: Beneficiary Types based on Profile
+  const filteredBeneficiaryTypes = BENEFICIARY_TYPES.filter(type => {
+    if (profile.gender === 'Male' && (type === 'Widow' || type === 'Woman' || type === 'Girl Child')) return false;
+    if (profile.marital_status !== 'Widowed' && type === 'Widow') return false;
+    if (profile.gender === 'Female' && profile.age && parseInt(profile.age) > 18 && type === 'Girl Child') return false;
+    return true;
+  });
+
+  // Logical Filtering: Check if selected district is TSP
+  const isSelectedDistrictTSP = TSP_DISTRICTS.includes(profile.district);
+
   useEffect(() => {
     const init = async () => {
       await dbService.init();
@@ -97,6 +108,20 @@ const App: React.FC = () => {
     };
     init();
   }, []);
+
+  // Effect to reset beneficiary type if it's no longer valid based on gender/marital status
+  useEffect(() => {
+    if (!filteredBeneficiaryTypes.includes(profile.beneficiary_type)) {
+      setProfile(prev => ({ ...prev, beneficiary_type: filteredBeneficiaryTypes[0] || 'Student' }));
+    }
+  }, [profile.gender, profile.marital_status]);
+
+  // Effect to reset TSP area if district changes to non-TSP
+  useEffect(() => {
+    if (!isSelectedDistrictTSP) {
+      setProfile(prev => ({ ...prev, is_tsp_area: 'No' }));
+    }
+  }, [profile.district]);
 
   const refreshSchemes = async () => {
     setLoading(true);
@@ -230,7 +255,7 @@ const App: React.FC = () => {
                         <label className="block space-y-1">
                           <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">लाभार्थी श्रेणी</span>
                           <select value={profile.beneficiary_type} onChange={e => setProfile({...profile, beneficiary_type: e.target.value})} className="w-full p-3.5 bg-slate-50 border-0 rounded-2xl font-bold text-xs ring-1 ring-slate-100 focus:ring-2 focus:ring-orange-500">
-                            {BENEFICIARY_TYPES.map(b => <option key={b} value={b}>{b}</option>)}
+                            {filteredBeneficiaryTypes.map(b => <option key={b} value={b}>{b}</option>)}
                           </select>
                         </label>
                       </div>
@@ -250,12 +275,16 @@ const App: React.FC = () => {
                             {AREA_TYPE.map(a => <option key={a} value={a}>{a}</option>)}
                           </select>
                         </label>
-                        <label className="block space-y-1">
-                          <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">TSP/Tribal Area</span>
-                          <select value={profile.is_tsp_area} onChange={e => setProfile({...profile, is_tsp_area: e.target.value})} className="w-full p-3.5 bg-slate-50 border-0 rounded-2xl font-bold text-xs ring-1 ring-slate-100 focus:ring-2 focus:ring-orange-500">
-                            {YES_NO.map(y => <option key={y} value={y}>{y}</option>)}
-                          </select>
-                        </label>
+                        
+                        {/* Logical: Show TSP question only for specific districts */}
+                        {isSelectedDistrictTSP && (
+                          <label className="block space-y-1 animate-in slide-in-from-top-2">
+                            <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">TSP/Tribal Area</span>
+                            <select value={profile.is_tsp_area} onChange={e => setProfile({...profile, is_tsp_area: e.target.value})} className="w-full p-3.5 bg-slate-50 border-0 rounded-2xl font-bold text-xs ring-1 ring-slate-100 focus:ring-2 focus:ring-orange-500">
+                              {YES_NO.map(y => <option key={y} value={y}>{y}</option>)}
+                            </select>
+                          </label>
+                        )}
                       </div>
                     </FormSection>
 
