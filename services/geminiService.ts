@@ -52,7 +52,8 @@ export async function fetchMasterSchemes(category: 'Central' | 'Rajasthan', forc
       config: { systemInstruction: SYSTEM_INSTRUCTION, tools: [{ googleSearch: {} }] },
     });
 
-    const match = response.text.match(/\[[\s\S]*\]/);
+    const text = response.text || "";
+    const match = text.match(/\[[\s\S]*\]/);
     if (match) {
       const fetched: Scheme[] = JSON.parse(match[0]);
       for (const s of fetched) {
@@ -95,7 +96,7 @@ export async function analyzeEligibility(profile: UserProfile): Promise<Analysis
       config: { systemInstruction: SYSTEM_INSTRUCTION, tools: [{ googleSearch: {} }] },
     });
 
-    const text = response.text;
+    const text = response.text || "";
     const jsonMatch = text.match(/---JSON_START---([\s\S]*?)---JSON_END---/);
     let eligible_schemes: Scheme[] = [];
     
@@ -133,7 +134,7 @@ export async function proposeSystemImprovement(): Promise<string> {
       contents: prompt,
       config: { systemInstruction: SYSTEM_INSTRUCTION },
     });
-    return response.text;
+    return response.text || "No proposal generated.";
   } catch (err) {
     console.error("Agent 5 Error:", err);
     return "Error generating improvement proposal.";
