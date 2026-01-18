@@ -3,9 +3,10 @@ import { GoogleGenAI } from "@google/genai";
 import { UserProfile, AnalysisResponse, Scheme } from "../types";
 import { dbService } from "./dbService";
 
-const SYSTEM_INSTRUCTION = `You are a world-class Indian Government Welfare Scheme Analyst.
-Deep expertise in Central Govt and Rajasthan State Sarkari Yojana (e.g., Jan-Aadhar, Chiranjeevi, Annuity schemes).
-PRIORITY: Rajasthan Govt > Central Govt. Focus on TSP districts when applicable.
+const SYSTEM_INSTRUCTION = `You are a world-class Indian Government Welfare Scheme Analyst with deep expertise in Central and State-level Sarkari Yojana.
+Expertise: Rajasthan-specific systems (Jan-Aadhar, Ration Card, TSP Area), and the two-child policy (June 2002 threshold).
+
+PRIORITY: Rajasthan Govt > Central Govt. Use database schemes as primary reference.
 
 STRICT JSON OUTPUT FORMAT FOR SCHEMES:
 {
@@ -25,19 +26,55 @@ STRICT JSON OUTPUT FORMAT FOR SCHEMES:
   "scheme_status": "NEW" | "UPDATED" | "ACTIVE" | "EXPIRED"
 }
 
-Respond in clean, polite Hindi (Devanagari) for explanations. Use clear bullet points.`;
+Respond in clean, polite Hindi (Devanagari) for the summary. Use clear bullet points.`;
 
-async function getAIClient() {
-  // Check browser-level database first
-  const dbKeys = await dbService.getSetting<{ gemini: string; groq: string }>('api_keys');
-  
-  // Logic: Use Box 1 (Gemini), if empty use Box 2 (Groq), if empty use Env
-  const apiKey = dbKeys?.gemini?.trim() || dbKeys?.groq?.trim() || process.env.API_KEY;
-  
-  if (!apiKey || apiKey === "") {
-    throw new Error("API Key nahi mili! Kripya Admin Panel mein kam se kam ek API Key (Gemini ya Groq box mein) darj karein.");
+/**
+ * Robustly extracts JSON from AI response text, handling markdown blocks or raw arrays.
+ */
+function extractJson(text: string): any {
+  try {
+    // 1. Check for specific markers
+    const markersMatch = text.match(/---JSON_START---([\s\S]*?)---JSON_END---/) || 
+                        text.match(/```json\s*([\s\S]*?)\s*```/);
+    if (markersMatch) {
+      return JSON.parse(markersMatch[1].trim());
+    }
+
+    // 2. Check for anything that looks like an array [ ... ]
+    const arrayMatch = text.match(/\[\s*\{[\s\S]*\}\s*\]/);
+    if (arrayMatch) {
+      return JSON.parse(arrayMatch[0].trim());
+    }
+
+    // 3. Check for anything that looks like an object { ... }
+    const objectMatch = text.match(/\{\s*"eligible_schemes"[\s\S]*\}/);
+    if (objectMatch) {
+      return JSON.parse(objectMatch[0].trim());
+    }
+  } catch (e) {
+    console.error("JSON Extraction failed:", e);
   }
-  return new GoogleGenAI({ apiKey });
+  return null;
+}
+
+/**
+ * Resolves API key: Box 1 (Gemini) > Box 2 (Groq) > process.env.API_KEY
+ */
+async function getAIClient() {
+  await dbService.init();
+  const dbKeys = await dbService.getSetting<any>('api_keys');
+  
+  const geminiKey = dbKeys?.gemini?.trim();
+  const groqKey = dbKeys?.groq?.trim();
+  const envKey = process.env.API_KEY?.trim();
+  
+  const finalKey = geminiKey || groqKey || envKey;
+  
+  if (!finalKey || finalKey === "" || finalKey === "YOUR_API_KEY") {
+    throw new Error("API Key nahi mili! Kripya Admin Panel mein API Key darj karein aur Save karein.");
+  }
+  
+  return new GoogleGenAI({ apiKey: finalKey });
 }
 
 export async function analyzeEligibility(profile: UserProfile): Promise<AnalysisResponse> {
@@ -49,63 +86,55 @@ export async function analyzeEligibility(profile: UserProfile): Promise<Analysis
   Analyze eligibility for the following Profile:
   ${JSON.stringify(profile)}
   
-  Cached Database Schemes (Primary Reference):
-  ${dbContext}
+  Local Database Schemes (Primary Source): ${dbContext}
 
-  Key Logic to use:
-  1. Gender: ${profile.gender}. If Male, exclude specific women schemes.
-  2. Age: ${profile.age}. 
-  3. Rajasthan Specific: Jan-Aadhar status is ${profile.jan_aadhar_status}. Ration Card is ${profile.ration_card_type}.
-  4. Children Logic (Rajasthan): Before June 2002: ${profile.children_before_2002}, After June 2002: ${profile.children_after_2002}.
-  5. TSP District: ${profile.district} (TSP Status: ${profile.is_tsp_area}).
-  6. Student: ${profile.beneficiary_type === 'Student' ? `Parent Status: ${profile.parent_status}, Class: ${profile.current_class}` : 'N/A'}.
-  7. Farmer: ${profile.beneficiary_type === 'Farmer' ? `Land Owner: ${profile.land_owner}` : 'N/A'}.
+  Key Logic:
+  1. Rajasthan Specific: Jan-Aadhar status is ${profile.jan_aadhar_status}. Ration Card is ${profile.ration_card_type}.
+  2. TSP Area: ${profile.is_tsp_area} (District: ${profile.district}).
+  3. Children: Pre-June 2002: ${profile.children_before_2002}, Post-June 2002: ${profile.children_after_2002}.
+  4. Student/Farmer Specifics: ${profile.beneficiary_type === 'Student' ? `Parent status ${profile.parent_status}, Class ${profile.current_class}` : ''} ${profile.beneficiary_type === 'Farmer' ? `Land owner: ${profile.land_owner}` : ''}.
 
-  Find ALL matches. Return format:
-  Summary in Hindi explanation first.
-  Then:
-  ---JSON_START---
-  { "eligible_schemes": [...] }
-  ---JSON_END---`;
+  Output Requirements:
+  - Explanation in Hindi bullet points.
+  - JSON array of eligible schemes inside ---JSON_START--- and ---JSON_END--- tags.
+  `;
 
   try {
     const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
+      model: 'gemini-3-pro-preview',
       contents: prompt,
-      config: { systemInstruction: SYSTEM_INSTRUCTION, tools: [{ googleSearch: {} }] },
+      config: { 
+        systemInstruction: SYSTEM_INSTRUCTION, 
+        tools: [{ googleSearch: {} }],
+        temperature: 0.1
+      },
     });
 
     const text = response.text || "";
-    const jsonMatch = text.match(/---JSON_START---([\s\S]*?)---JSON_END---/);
-    let eligible_schemes: Scheme[] = [];
+    const extractedData = extractJson(text);
     
-    if (jsonMatch) {
-      try {
-        const data = JSON.parse(jsonMatch[1]);
-        eligible_schemes = data.eligible_schemes || [];
-      } catch (e) {
-        console.error("JSON Error", e);
-      }
+    let eligible_schemes: Scheme[] = [];
+    if (extractedData) {
+      eligible_schemes = Array.isArray(extractedData) ? extractedData : (extractedData.eligible_schemes || []);
     }
 
-    const result = {
-      hindiContent: text.split("---JSON_START---")[0].trim(),
+    const result: AnalysisResponse = {
+      hindiContent: text.split(/---JSON_START---|```json|\[/)[0].trim(),
       eligible_schemes,
       groundingSources: response.candidates?.[0]?.groundingMetadata?.groundingChunks || []
     };
 
-    // Auto-save results to database
     await dbService.saveAppData('last_result', result);
     return result;
-  } catch (err) {
-    console.error("Analysis Error:", err);
-    throw err;
+  } catch (err: any) {
+    console.error("AI Analysis Error:", err);
+    throw new Error(err.message || "AI Analysis fail ho gaya.");
   }
 }
 
 export async function fetchMasterSchemes(category: 'Central' | 'Rajasthan'): Promise<Scheme[]> {
   const ai = await getAIClient();
-  const prompt = `Fetch the most updated list of 2024-2025 ${category} government schemes for beneficiaries like students, farmers, widows, and BPL families. Return only JSON array.`;
+  const prompt = `Perform web search and list 15 updated welfare schemes for ${category} (2024-2025). Output ONLY as a JSON array.`;
 
   try {
     const response = await ai.models.generateContent({
@@ -115,28 +144,17 @@ export async function fetchMasterSchemes(category: 'Central' | 'Rajasthan'): Pro
     });
 
     const text = response.text || "";
-    const match = text.match(/\[[\s\S]*\]/);
-    if (match) {
-      const fetched: Scheme[] = JSON.parse(match[0]);
+    const fetched = extractJson(text);
+    
+    if (Array.isArray(fetched)) {
       for (const s of fetched) {
         await dbService.upsertScheme(s);
       }
       return fetched;
     }
+    throw new Error("Invalid format from AI.");
   } catch (err) {
-    console.error("Fetch Error:", err);
+    console.error("Master Fetch Error:", err);
     throw err;
   }
-  return await dbService.getAllSchemes();
-}
-
-export async function proposeSystemImprovement(): Promise<string> {
-  const ai = await getAIClient();
-  const prompt = `Suggest a coding improvement for this Indian Government Scheme portal. Provide explanation and code.`;
-  const response = await ai.models.generateContent({
-    model: 'gemini-3-flash-preview',
-    contents: prompt,
-    config: { systemInstruction: SYSTEM_INSTRUCTION },
-  });
-  return response.text || "";
 }

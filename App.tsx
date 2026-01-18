@@ -42,20 +42,20 @@ const SchemeCard: React.FC<{ scheme: Scheme; isBookmarked: boolean; onToggle: ()
         <div className="px-5 pb-5 pt-2 border-t border-slate-50 animate-in slide-in-from-top-2">
           <div className="space-y-4">
             <div>
-              <h4 className="text-[10px] font-black text-orange-600 uppercase tracking-widest mb-2">विस्तृत लाभ</h4>
+              <h4 className="text-[10px] font-black text-orange-600 uppercase tracking-widest mb-2">विस्तृत लाभ (Details)</h4>
               <p className="text-xs text-slate-700 font-bold leading-relaxed">{scheme.detailed_benefits}</p>
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">दस्तावेज</h4>
                 <ul className="text-[10px] text-slate-600 list-disc pl-4 font-bold">
-                  {scheme.required_documents.map((d, i) => <li key={i}>{d}</li>)}
+                  {(scheme.required_documents || []).map((d, i) => <li key={i}>{d}</li>)}
                 </ul>
               </div>
               <div>
                 <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">पात्रता</h4>
                 <ul className="text-[10px] text-slate-600 list-disc pl-4 font-bold">
-                  {scheme.eligibility.map((e, i) => <li key={i}>{e}</li>)}
+                  {(scheme.eligibility || []).map((e, i) => <li key={i}>{e}</li>)}
                 </ul>
               </div>
             </div>
@@ -88,24 +88,21 @@ const App: React.FC = () => {
   const [bookmarks, setBookmarks] = useState<string[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
 
-  // Initial Data Load (Keys, Profile, Results)
+  const resultRef = useRef<HTMLDivElement>(null);
+
+  // Initial Load
   useEffect(() => {
     const init = async () => {
       await dbService.init();
+      const savedKeys = await dbService.getSetting<any>('api_keys');
+      if (savedKeys) setApiKeys(k => ({ ...k, ...savedKeys }));
       
-      // Load Keys
-      const savedKeys = await dbService.getSetting<typeof apiKeys>('api_keys');
-      if (savedKeys) setApiKeys(savedKeys);
-      
-      // Load Profile
       const savedProfile = await dbService.getAppData<UserProfile>('profile');
       if (savedProfile) setProfile(savedProfile);
 
-      // Load Result (Last successful analysis)
       const savedResult = await dbService.getAppData<AnalysisResponse>('last_result');
       if (savedResult) setResult(savedResult);
       
-      // Load Schemes
       const localSchemes = await dbService.getAllSchemes();
       setMasterSchemes(localSchemes);
 
@@ -115,27 +112,19 @@ const App: React.FC = () => {
     init();
   }, []);
 
-  // Save profile to DB whenever it changes
+  // Logical Constraints
   useEffect(() => {
-    dbService.saveAppData('profile', profile);
-  }, [profile]);
-
-  // Logical Auto-Updates
-  useEffect(() => {
-    // 1. TSP Auto-Detection
     if (profile.state === 'Rajasthan' && TSP_DISTRICTS.includes(profile.district)) {
-      setProfile(p => p.is_tsp_area === 'Yes' ? p : { ...p, is_tsp_area: 'Yes' });
+      if (profile.is_tsp_area !== 'Yes') setProfile(p => ({ ...p, is_tsp_area: 'Yes' }));
     } else if (profile.state === 'Rajasthan') {
-      setProfile(p => p.is_tsp_area === 'No' ? p : { ...p, is_tsp_area: 'No' });
+      if (profile.is_tsp_area !== 'No') setProfile(p => ({ ...p, is_tsp_area: 'No' }));
     }
   }, [profile.district, profile.state]);
 
-  // Handle gender-based marital status filtering
   const filteredMaritalStatus = profile.gender === 'Male' 
     ? MARITAL_STATUS.filter(m => m !== 'Widowed') 
     : MARITAL_STATUS;
 
-  // Beneficiary Logic
   const filteredBeneficiaryTypes = BENEFICIARY_TYPES.filter(type => {
     if (profile.gender === 'Male' && (type === 'Widow' || type === 'Woman' || type === 'Girl Child')) return false;
     return true;
@@ -144,10 +133,11 @@ const App: React.FC = () => {
   const handleAnalyze = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
+    setResult(null);
     try {
       const res = await analyzeEligibility(profile);
       setResult(res);
-      // Result is saved to DB inside analyzeEligibility
+      setTimeout(() => resultRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
     } catch (err: any) {
       alert(err.message);
       if (err.message.includes("API Key")) setActiveTab('admin');
@@ -157,7 +147,7 @@ const App: React.FC = () => {
 
   const saveConfig = async () => {
     await dbService.setSetting('api_keys', apiKeys);
-    alert("API Keys browser database mein save kar di gayi hain. Yeh hamesha rahengi jab tak aap delete na karein.");
+    alert("API Keys browser database mein save kar di gayi hain. Yeh hamesha rahengi.");
   };
 
   const handleBookmark = (name: string) => {
@@ -174,14 +164,14 @@ const App: React.FC = () => {
              <div className="w-10 h-10 bg-orange-600 rounded-xl flex items-center justify-center text-xl shadow-lg">🇮🇳</div>
              <div>
                <h1 className="text-lg font-black text-slate-800 leading-none">Sarkari Yojana AI</h1>
-               <p className="text-[10px] font-black text-orange-600 uppercase tracking-widest mt-1">Smart Analytics Engine</p>
+               <p className="text-[10px] font-black text-orange-600 uppercase tracking-widest mt-1">Smart Welfare Analytics</p>
              </div>
           </div>
           <nav className="flex bg-slate-100 p-1 rounded-2xl gap-1">
             {[
               { id: 'check', label: 'पात्रता', icon: '🔍' },
               { id: 'browse', label: 'योजनाएं', icon: '📑' },
-              { id: 'saved', label: 'Saved', icon: '💖' },
+              { id: 'saved', label: 'पसंदीदा', icon: '💖' },
               { id: 'admin', label: 'Admin', icon: '⚙️' }
             ].map(tab => (
               <button 
@@ -206,27 +196,24 @@ const App: React.FC = () => {
                       <div className="space-y-4">
                         <div className="grid grid-cols-2 gap-4">
                           <label className="block">
-                            <span className="text-[10px] font-black text-slate-400 uppercase">लिंग (Gender)</span>
-                            <select value={profile.gender} onChange={e => {
-                              const g = e.target.value;
-                              setProfile(prev => ({ ...prev, gender: g, marital_status: g === 'Male' && prev.marital_status === 'Widowed' ? 'Single' : prev.marital_status }));
-                            }} className="w-full mt-1 p-3 bg-slate-50 border-0 rounded-xl font-bold text-xs">
+                            <span className="text-[10px] font-black text-slate-400 uppercase">लिंग</span>
+                            <select value={profile.gender} onChange={e => setProfile(prev => ({ ...prev, gender: e.target.value }))} className="w-full mt-1 p-3 bg-slate-50 border-0 rounded-xl font-bold text-xs">
                               {GENDER.map(g => <option key={g} value={g}>{g}</option>)}
                             </select>
                           </label>
                           <label className="block">
-                            <span className="text-[10px] font-black text-slate-400 uppercase">आयु (Age)</span>
+                            <span className="text-[10px] font-black text-slate-400 uppercase">आयु</span>
                             <input type="number" value={profile.age} onChange={e => setProfile({...profile, age: e.target.value})} className="w-full mt-1 p-3 bg-slate-50 border-0 rounded-xl font-bold text-xs" />
                           </label>
                         </div>
                         <label className="block">
-                          <span className="text-[10px] font-black text-slate-400 uppercase">शादी की स्थिति</span>
+                          <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">शादी की स्थिति</span>
                           <select value={profile.marital_status} onChange={e => setProfile({...profile, marital_status: e.target.value})} className="w-full mt-1 p-3 bg-slate-50 border-0 rounded-xl font-bold text-xs">
                             {filteredMaritalStatus.map(s => <option key={s} value={s}>{s}</option>)}
                           </select>
                         </label>
                         <label className="block">
-                          <span className="text-[10px] font-black text-slate-400 uppercase">लाभार्थी श्रेणी</span>
+                          <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">लाभार्थी श्रेणी</span>
                           <select value={profile.beneficiary_type} onChange={e => setProfile({...profile, beneficiary_type: e.target.value})} className="w-full mt-1 p-3 bg-slate-50 border-0 rounded-xl font-bold text-xs">
                             {filteredBeneficiaryTypes.map(b => <option key={b} value={b}>{b}</option>)}
                           </select>
@@ -237,25 +224,25 @@ const App: React.FC = () => {
                     <FormSection title="स्थान एवं पहचान" icon="📍">
                       <div className="space-y-4">
                         <label className="block">
-                          <span className="text-[10px] font-black text-slate-400 uppercase">जिला (District)</span>
+                          <span className="text-[10px] font-black text-slate-400 uppercase">जिला</span>
                           <select value={profile.district} onChange={e => setProfile({...profile, district: e.target.value})} className="w-full mt-1 p-3 bg-slate-50 border-0 rounded-xl font-bold text-xs">
                             {RAJASTHAN_DISTRICTS.map(d => <option key={d} value={d}>{d}</option>)}
                           </select>
                         </label>
                         <div className="grid grid-cols-2 gap-4">
                           <label className="block">
-                            <span className="text-[10px] font-black text-slate-400 uppercase">TSP क्षेत्र</span>
+                            <span className="text-[10px] font-black text-slate-400 uppercase leading-none">TSP Area?</span>
                             <input disabled value={profile.is_tsp_area} className="w-full mt-1 p-3 bg-slate-100 border-0 rounded-xl font-black text-xs text-orange-600" />
                           </label>
                           <label className="block">
-                            <span className="text-[10px] font-black text-slate-400 uppercase">Jan-Aadhar Card?</span>
+                            <span className="text-[10px] font-black text-slate-400 uppercase leading-none">Jan-Aadhar Card?</span>
                             <select value={profile.jan_aadhar_status} onChange={e => setProfile({...profile, jan_aadhar_status: e.target.value})} className="w-full mt-1 p-3 bg-slate-50 border-0 rounded-xl font-bold text-xs">
                               {YES_NO.map(y => <option key={y} value={y}>{y}</option>)}
                             </select>
                           </label>
                         </div>
                         <label className="block">
-                          <span className="text-[10px] font-black text-slate-400 uppercase">राशन कार्ड का प्रकार</span>
+                          <span className="text-[10px] font-black text-slate-400 uppercase">राशन कार्ड टाइप</span>
                           <select value={profile.ration_card_type} onChange={e => setProfile({...profile, ration_card_type: e.target.value})} className="w-full mt-1 p-3 bg-slate-50 border-0 rounded-xl font-bold text-xs">
                             {RATION_CARD_TYPES.map(r => <option key={r} value={r}>{r}</option>)}
                           </select>
@@ -282,7 +269,7 @@ const App: React.FC = () => {
                             </select>
                          </label>
                          <label className="block">
-                            <span className="text-[10px] font-black text-slate-400 uppercase">वार्षिक आय (Annual Income)</span>
+                            <span className="text-[10px] font-black text-slate-400 uppercase">वार्षिक आय</span>
                             <input type="number" value={profile.income} onChange={e => setProfile({...profile, income: e.target.value})} className="w-full mt-1 p-3 bg-slate-50 border-0 rounded-xl font-bold text-xs" />
                          </label>
                       </div>
@@ -292,7 +279,7 @@ const App: React.FC = () => {
                       <FormSection title="विद्यार्थी विवरण" icon="🎓">
                          <div className="space-y-4 animate-in slide-in-from-top-4">
                             <label className="block">
-                               <span className="text-[10px] font-black text-slate-400 uppercase">माता-पिता की स्थिति</span>
+                               <span className="text-[10px] font-black text-slate-400 uppercase">अभिभावक स्थिति</span>
                                <select value={profile.parent_status} onChange={e => setProfile({...profile, parent_status: e.target.value})} className="w-full mt-1 p-3 bg-slate-50 border-0 rounded-xl font-bold text-xs">
                                  {PARENT_STATUS.map(p => <option key={p} value={p}>{p}</option>)}
                                </select>
@@ -320,7 +307,7 @@ const App: React.FC = () => {
 
                   </div>
                   <button type="submit" disabled={loading} className="w-full py-5 bg-orange-600 text-white font-black rounded-3xl shadow-lg hover:bg-orange-700 transition-all uppercase tracking-widest text-sm disabled:opacity-50">
-                    {loading ? 'Analyzing Eligibility...' : 'योजनाएं खोजें 🔍'}
+                    {loading ? 'AI Analysis in progress...' : 'पात्र योजनाएं खोजें 🔍'}
                   </button>
                </form>
              )}
@@ -328,25 +315,44 @@ const App: React.FC = () => {
              {loading && (
                <div className="py-20 text-center space-y-4">
                   <div className="w-12 h-12 border-4 border-orange-100 border-t-orange-600 rounded-full animate-spin mx-auto"></div>
-                  <p className="font-black text-slate-400 uppercase text-[10px] tracking-widest">AI data fetch logic in progress...</p>
+                  <p className="font-black text-slate-400 uppercase text-[10px] tracking-widest">Checking government data...</p>
                </div>
              )}
 
              {result && !loading && (
-               <div className="space-y-8 animate-slide-up">
+               <div ref={resultRef} className="space-y-8 animate-slide-up">
                  <div className="bg-white p-8 rounded-[2rem] shadow-xl border border-slate-100">
                    <div className="flex items-center justify-between mb-8">
                      <h2 className="text-xl font-black text-slate-800">पात्र योजनाएं ({result.eligible_schemes.length})</h2>
-                     <button onClick={() => setResult(null)} className="text-[10px] font-black text-orange-600 bg-orange-50 px-4 py-2 rounded-xl">नया सर्च</button>
+                     <button onClick={() => setResult(null)} className="text-[10px] font-black text-orange-600 bg-orange-50 px-4 py-2 rounded-xl transition-colors hover:bg-orange-100">🔄 नया सर्च</button>
                    </div>
+                   
                    <div className="bg-slate-50 p-6 rounded-2xl mb-8 text-sm text-slate-700 leading-relaxed whitespace-pre-wrap font-medium border border-slate-100">
                       {result.hindiContent}
                    </div>
-                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      {result.eligible_schemes.map((s, idx) => (
-                        <SchemeCard key={idx} scheme={s} isBookmarked={bookmarks.includes(s.yojana_name)} onToggle={() => handleBookmark(s.yojana_name)} />
-                      ))}
-                   </div>
+
+                   {result.groundingSources && result.groundingSources.length > 0 && (
+                     <div className="mb-8 p-4 bg-blue-50 rounded-2xl border border-blue-100">
+                       <h3 className="text-[10px] font-black text-blue-800 uppercase mb-2 tracking-widest">Sources & References:</h3>
+                       <div className="flex flex-wrap gap-2">
+                         {result.groundingSources.map((chunk: any, i: number) => chunk.web && (
+                           <a key={i} href={chunk.web.uri} target="_blank" rel="noreferrer" className="text-[10px] bg-white px-3 py-1.5 rounded-lg border border-blue-200 text-blue-600 font-bold hover:bg-blue-600 hover:text-white transition-all">
+                             {chunk.web.title || "Ref Link"}
+                           </a>
+                         ))}
+                       </div>
+                     </div>
+                   )}
+
+                   {result.eligible_schemes.length > 0 ? (
+                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {result.eligible_schemes.map((s, idx) => (
+                          <SchemeCard key={idx} scheme={s} isBookmarked={bookmarks.includes(s.yojana_name)} onToggle={() => handleBookmark(s.yojana_name)} />
+                        ))}
+                     </div>
+                   ) : (
+                     <p className="text-center py-10 text-slate-400 font-bold">Koi yojana nahi mili. Detail badal kar search karein.</p>
+                   )}
                  </div>
                </div>
              )}
@@ -362,11 +368,11 @@ const App: React.FC = () => {
                     e.preventDefault();
                     if(loginForm.email === 'yadavnagji@gmail.com' && loginForm.password === '123456') {
                       setAuth({ isAuthenticated: true, user: 'Nagji Yadav' });
-                    } else { alert("Login Error!"); }
+                    } else { alert("Login failed!"); }
                   }} className="space-y-4">
-                    <input type="email" required value={loginForm.email} onChange={e => setLoginForm({...loginForm, email: e.target.value})} className="w-full p-4 bg-slate-50 rounded-2xl border-0 font-bold text-xs" placeholder="Email" />
-                    <input type="password" required value={loginForm.password} onChange={e => setLoginForm({...loginForm, password: e.target.value})} className="w-full p-4 bg-slate-50 rounded-2xl border-0 font-bold text-xs" placeholder="Password" />
-                    <button type="submit" className="w-full py-4 bg-orange-600 text-white font-black rounded-2xl shadow-lg">Login</button>
+                    <input type="email" required value={loginForm.email} onChange={e => setLoginForm({...loginForm, email: e.target.value})} className="w-full p-4 bg-slate-50 rounded-2xl border-0 font-bold text-xs focus:ring-2 focus:ring-orange-500" placeholder="UserID" />
+                    <input type="password" required value={loginForm.password} onChange={e => setLoginForm({...loginForm, password: e.target.value})} className="w-full p-4 bg-slate-50 rounded-2xl border-0 font-bold text-xs focus:ring-2 focus:ring-orange-500" placeholder="Password" />
+                    <button type="submit" className="w-full py-4 bg-orange-600 text-white font-black rounded-2xl shadow-lg transition-transform hover:scale-[1.02]">Login</button>
                   </form>
                </div>
              ) : (
@@ -377,14 +383,27 @@ const App: React.FC = () => {
                   </div>
                   <div className="space-y-6">
                      <div className="space-y-2">
-                        <label className="text-[10px] font-black text-slate-400 uppercase">Input Box 1 (Gemini API Key)</label>
-                        <input type="password" value={apiKeys.gemini} onChange={e => setApiKeys({...apiKeys, gemini: e.target.value})} className="w-full p-4 bg-slate-50 rounded-2xl border-0 font-mono text-xs" placeholder="AI Key Box 1" />
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Box 1: Gemini API Key</label>
+                        <input type="password" value={apiKeys.gemini} onChange={e => setApiKeys({...apiKeys, gemini: e.target.value})} className="w-full p-4 bg-slate-50 rounded-2xl border-0 font-mono text-xs focus:ring-2 focus:ring-orange-500" placeholder="Enter Gemini Key" />
+                        <p className="text-[9px] text-slate-400">Primary logic key.</p>
                      </div>
                      <div className="space-y-2">
-                        <label className="text-[10px] font-black text-slate-400 uppercase">Input Box 2 (Groq API Key)</label>
-                        <input type="password" value={apiKeys.groq} onChange={e => setApiKeys({...apiKeys, groq: e.target.value})} className="w-full p-4 bg-slate-50 rounded-2xl border-0 font-mono text-xs" placeholder="AI Key Box 2" />
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Box 2: Groq / Backup Key</label>
+                        <input type="password" value={apiKeys.groq} onChange={e => setApiKeys({...apiKeys, groq: e.target.value})} className="w-full p-4 bg-slate-50 rounded-2xl border-0 font-mono text-xs focus:ring-2 focus:ring-orange-500" placeholder="Enter Backup Key" />
+                        <p className="text-[9px] text-slate-400">Checked if Box 1 is empty.</p>
                      </div>
-                     <button onClick={saveConfig} className="w-full py-4 bg-slate-900 text-white font-black rounded-2xl text-[10px] uppercase tracking-widest shadow-xl">Save & Lock in Database</button>
+                     <button onClick={saveConfig} className="w-full py-4 bg-slate-900 text-white font-black rounded-2xl text-[10px] uppercase tracking-widest shadow-xl transition-all hover:bg-black">Save Permanent Keys</button>
+                     
+                     <div className="pt-6 border-t flex flex-col gap-3">
+                        <h3 className="text-xs font-black text-slate-800 uppercase tracking-widest">Database Tools</h3>
+                        <button onClick={async () => {
+                           if(confirm("Saara setting aur keys delete karein?")) {
+                             await dbService.setSetting('api_keys', null);
+                             location.reload();
+                           }
+                        }} className="w-full py-3 bg-red-50 text-red-600 font-bold rounded-xl text-[10px] uppercase tracking-widest">Clear All API Settings</button>
+                        <button onClick={() => fetchMasterSchemes('Rajasthan')} className="py-4 bg-blue-50 text-blue-600 font-black rounded-xl text-[10px] uppercase tracking-widest">Update Master List</button>
+                     </div>
                   </div>
                </div>
              )}
