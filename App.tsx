@@ -11,7 +11,8 @@ import {
   YES_NO, 
   RATION_CARD_TYPES, 
   PENSION_TYPES, 
-  PARENT_STATUS
+  PARENT_STATUS,
+  EDUCATION_LEVELS
 } from './constants';
 import FormSection from './components/FormSection';
 import { analyzeEligibility, fetchMasterSchemes } from './services/geminiService';
@@ -187,9 +188,18 @@ const App: React.FC = () => {
                           <input type="number" value={profile.age} onChange={e => setProfile({...profile, age: e.target.value})} className="w-full mt-1 p-3 bg-slate-50 border-0 rounded-xl font-bold text-xs" />
                         </label>
                       </div>
-                      <select value={profile.beneficiary_type} onChange={e => setProfile({...profile, beneficiary_type: e.target.value})} className="w-full mt-1 p-3 bg-slate-50 border-0 rounded-xl font-bold text-xs">
-                        {BENEFICIARY_TYPES.map(b => <option key={b} value={b}>{b}</option>)}
-                      </select>
+                      <label className="block">
+                        <span className="text-[10px] font-black text-slate-400 uppercase">लाभार्थी प्रकार</span>
+                        <select value={profile.beneficiary_type} onChange={e => setProfile({...profile, beneficiary_type: e.target.value})} className="w-full mt-1 p-3 bg-slate-50 border-0 rounded-xl font-bold text-xs">
+                          {BENEFICIARY_TYPES.map(b => <option key={b} value={b}>{b}</option>)}
+                        </select>
+                      </label>
+                      <label className="block">
+                        <span className="text-[10px] font-black text-slate-400 uppercase">शिक्षा का स्तर</span>
+                        <select value={profile.education} onChange={e => setProfile({...profile, education: e.target.value})} className="w-full mt-1 p-3 bg-slate-50 border-0 rounded-xl font-bold text-xs">
+                          {EDUCATION_LEVELS.map(ed => <option key={ed} value={ed}>{ed}</option>)}
+                        </select>
+                      </label>
                     </FormSection>
 
                     <FormSection title="स्थान" icon="📍">
