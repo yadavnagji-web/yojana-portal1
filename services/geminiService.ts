@@ -3,18 +3,18 @@ import { GoogleGenAI } from "@google/genai";
 import { UserProfile, AnalysisResponse, Scheme } from "../types";
 import { dbService } from "./dbService";
 
-const SYSTEM_INSTRUCTION = `You are the Lead Welfare Architect for India & Rajasthan. 
+const SYSTEM_INSTRUCTION = `You are the Lead Welfare Architect for the Government of India and Rajasthan. 
 Your goal is to provide a comprehensive list of eligible welfare schemes for the 2024-25 and 2026 cycles.
 
 STRICT JSON OUTPUT RULES:
-1. Always return a JSON object with the key "eligible_schemes".
-2. If no schemes are a 100% match, return schemes where the user is "CONDITIONAL".
+1. Always return a valid JSON object with the key "eligible_schemes".
+2. If no exact matches are found, you MUST return at least 3-5 schemes where the user might be "CONDITIONAL" based on their category or age.
 3. Use Hindi for text fields like yojana_name, short_purpose_hindi, eligibility_reason_hindi.
-4. Surround the JSON with ---JSON_START--- and ---JSON_END---.
+4. Surround the JSON block with ---JSON_START--- and ---JSON_END--- tags.
 
 JSON Schema for each item:
 {
-  "yojana_name": "Scheme Name",
+  "yojana_name": "Scheme Name in Hindi",
   "government": "Rajasthan Govt" | "Central Govt",
   "category": "e.g. Health, Education, Farming",
   "short_purpose_hindi": "...",
@@ -76,12 +76,13 @@ export async function analyzeEligibility(profile: UserProfile, isDummy: boolean)
   let rawText = "";
   let groundingSources: any[] = [];
 
-  const prompt = `Profile: ${JSON.stringify(profile)}.
-Find schemes for 2024-25 and 2026 for Rajasthan and Central Govt.
-Be specific about the "Application Process" (signatures and submission points).
-Return a Hindi summary followed by the JSON.`;
+  const prompt = `Perform a deep analysis for this User Profile: ${JSON.stringify(profile)}.
+Identify active schemes for 2024-25 and specifically look for upcoming 2026 scheme announcements or policy shifts for Rajasthan and Central Govt.
+Include application details (signatures from Patwari/Sarpanch and submission points).
+Important: If exact eligibility is unclear, list the scheme as CONDITIONAL and explain what documents are needed.
+Return a detailed Hindi summary followed by the JSON data block.`;
 
-  // Attempt Groq
+  // --- Attempt GROQ (Fast Reasoning) ---
   if (groqKey && groqKey.startsWith('gsk_')) {
     try {
       const resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
@@ -89,17 +90,25 @@ Return a Hindi summary followed by the JSON.`;
         headers: { 'Authorization': `Bearer ${groqKey}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
           model: 'llama-3.3-70b-versatile',
-          messages: [{ role: 'system', content: SYSTEM_INSTRUCTION }, { role: 'user', content: prompt }],
+          messages: [
+            { role: 'system', content: SYSTEM_INSTRUCTION },
+            { role: 'user', content: prompt }
+          ],
           temperature: 0.1
         })
       });
       const data = await resp.json();
-      rawText = data.choices?.[0]?.message?.content || "";
-    } catch (e) { console.error("Groq failed:", e); }
+      if (data.choices?.[0]?.message?.content) {
+        rawText = data.choices[0].message.content;
+      }
+    } catch (e) {
+      console.error("Groq API error:", e);
+    }
   }
 
-  // Attempt Gemini (with Search)
-  if (!rawText && geminiKey) {
+  // --- Attempt Gemini 3 Pro (Primary with Search) ---
+  // If Groq failed or as a secondary check if rawText is too short
+  if (geminiKey && (!rawText || rawText.length < 100)) {
     try {
       const ai = new GoogleGenAI({ apiKey: geminiKey });
       const result = await ai.models.generateContent({
@@ -112,19 +121,23 @@ Return a Hindi summary followed by the JSON.`;
       });
       rawText = result.text || "";
       groundingSources = result.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
-    } catch (e) { console.error("Gemini failed:", e); }
+    } catch (e) {
+      console.error("Gemini API error:", e);
+      if (!rawText) throw new Error("दोनों API (Gemini/Groq) काम नहीं कर रही हैं। कृपया Admin में Key चेक करें।");
+    }
   }
 
-  if (!rawText) throw new Error("Could not connect to AI services. Please check keys.");
+  if (!rawText) throw new Error("AI सेवा से जवाब नहीं मिला। कृपया इंटरनेट या API Key जांचें।");
 
   const data = extractJson(rawText);
   let schemes = data?.eligible_schemes || (Array.isArray(data) ? data : []);
 
-  // Ensure mandatory fields
+  // Cleaning and normalizing data
   schemes = schemes.map((s: any) => ({
     ...s,
     government: s.government || 'Rajasthan Govt',
-    eligibility_status: s.eligibility_status || 'ELIGIBLE'
+    eligibility_status: s.eligibility_status || 'ELIGIBLE',
+    yojana_name: s.yojana_name || 'अज्ञात योजना'
   }));
 
   const response: AnalysisResponse = {
