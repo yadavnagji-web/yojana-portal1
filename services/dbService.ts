@@ -1,11 +1,12 @@
 
-import { Scheme, AIAgentLog } from "../types";
+import { Scheme, AIAgentLog, UserProfile, AnalysisResponse } from "../types";
 
 const DB_NAME = "SarkariYojanaProDB";
-const DB_VERSION = 5; 
+const DB_VERSION = 6; 
 const SCHEME_STORE = "schemes_v2";
 const SETTINGS_STORE = "settings";
 const LOG_STORE = "ai_logs";
+const DATA_STORE = "app_data"; // Store for profile and results
 
 export class DBService {
   private static instance: DBService;
@@ -36,6 +37,9 @@ export class DBService {
         if (!db.objectStoreNames.contains(LOG_STORE)) {
           db.createObjectStore(LOG_STORE, { keyPath: "id" });
         }
+        if (!db.objectStoreNames.contains(DATA_STORE)) {
+          db.createObjectStore(DATA_STORE);
+        }
       };
 
       request.onsuccess = (event) => {
@@ -47,7 +51,6 @@ export class DBService {
     });
   }
 
-  // AI Agent Logs
   public async addLog(log: AIAgentLog): Promise<void> {
     if (!this.db) await this.init();
     const tx = this.db!.transaction(LOG_STORE, "readwrite");
@@ -63,12 +66,9 @@ export class DBService {
     });
   }
 
-  // Scheme Logic with Hash Detection
   public async upsertScheme(scheme: Scheme): Promise<'INSERT' | 'UPDATE' | 'IGNORE'> {
     if (!this.db) await this.init();
     const existing = await this.getScheme(scheme.yojana_name);
-    
-    // Simple hash: stringify everything except metadata
     const coreData = { ...scheme, hash_signature: undefined, last_checked_date: undefined, scheme_status: undefined };
     const newHash = btoa(unescape(encodeURIComponent(JSON.stringify(coreData))));
     
@@ -76,12 +76,10 @@ export class DBService {
       await this.saveScheme({ ...scheme, hash_signature: newHash, last_checked_date: Date.now(), scheme_status: 'NEW' });
       return 'INSERT';
     }
-
     if (existing.hash_signature !== newHash) {
       await this.saveScheme({ ...scheme, hash_signature: newHash, last_checked_date: Date.now(), scheme_status: 'UPDATED' });
       return 'UPDATE';
     }
-
     return 'IGNORE';
   }
 
@@ -113,6 +111,22 @@ export class DBService {
     });
   }
 
+  // Persistent App Data (Profile, Last Analysis)
+  public async saveAppData(key: 'profile' | 'last_result', data: any): Promise<void> {
+    if (!this.db) await this.init();
+    const tx = this.db!.transaction(DATA_STORE, "readwrite");
+    tx.objectStore(DATA_STORE).put(data, key);
+  }
+
+  public async getAppData<T>(key: 'profile' | 'last_result'): Promise<T | null> {
+    if (!this.db) await this.init();
+    return new Promise((resolve) => {
+      const tx = this.db!.transaction(DATA_STORE, "readonly");
+      const req = tx.objectStore(DATA_STORE).get(key);
+      req.onsuccess = () => resolve(req.result || null);
+    });
+  }
+
   public async getAllSchemes(): Promise<Scheme[]> {
     if (!this.db) await this.init();
     return new Promise((resolve) => {
@@ -120,12 +134,6 @@ export class DBService {
       const req = tx.objectStore(SCHEME_STORE).getAll();
       req.onsuccess = () => resolve(req.result);
     });
-  }
-
-  public async deleteScheme(name: string): Promise<void> {
-    if (!this.db) await this.init();
-    const tx = this.db!.transaction(SCHEME_STORE, "readwrite");
-    tx.objectStore(SCHEME_STORE).delete(name);
   }
 }
 

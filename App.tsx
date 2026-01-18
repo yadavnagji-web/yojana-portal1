@@ -1,5 +1,6 @@
+
 import React, { useState, useRef, useEffect } from 'react';
-import { UserProfile, AnalysisResponse, Scheme, AuthState, AIAgentLog } from './types';
+import { UserProfile, AnalysisResponse, Scheme, AuthState } from './types';
 import { 
   RAJASTHAN_DISTRICTS, 
   TSP_DISTRICTS, 
@@ -12,11 +13,10 @@ import {
   RATION_CARD_TYPES, 
   PENSION_TYPES, 
   PARENT_STATUS,
-  EDUCATION_LEVELS,
-  OCCUPATIONS
+  EDUCATION_LEVELS
 } from './constants';
 import FormSection from './components/FormSection';
-import { analyzeEligibility, fetchMasterSchemes, proposeSystemImprovement } from './services/geminiService';
+import { analyzeEligibility, fetchMasterSchemes } from './services/geminiService';
 import { dbService } from './services/dbService';
 
 const SchemeCard: React.FC<{ scheme: Scheme; isBookmarked: boolean; onToggle: () => void }> = ({ scheme, isBookmarked, onToggle }) => {
@@ -60,8 +60,7 @@ const SchemeCard: React.FC<{ scheme: Scheme; isBookmarked: boolean; onToggle: ()
               </div>
             </div>
             <div className="flex gap-2 pt-2">
-              <a href={scheme.online_apply_link} target="_blank" rel="noreferrer" className="flex-1 bg-orange-600 text-white py-2.5 rounded-xl text-[10px] font-black text-center shadow-lg hover:bg-orange-700">Apply Now</a>
-              {scheme.official_pdf_link && <a href={scheme.official_pdf_link} target="_blank" rel="noreferrer" className="flex-1 bg-slate-100 text-slate-600 py-2.5 rounded-xl text-[10px] font-black text-center hover:bg-slate-200">Official Info</a>}
+              <a href={scheme.online_apply_link} target="_blank" rel="noreferrer" className="flex-1 bg-orange-600 text-white py-2.5 rounded-xl text-[10px] font-black text-center shadow-lg hover:bg-orange-700">Apply Online</a>
             </div>
           </div>
         </div>
@@ -89,13 +88,24 @@ const App: React.FC = () => {
   const [bookmarks, setBookmarks] = useState<string[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
 
-  // Initial Data Load
+  // Initial Data Load (Keys, Profile, Results)
   useEffect(() => {
     const init = async () => {
       await dbService.init();
+      
+      // Load Keys
       const savedKeys = await dbService.getSetting<typeof apiKeys>('api_keys');
       if (savedKeys) setApiKeys(savedKeys);
       
+      // Load Profile
+      const savedProfile = await dbService.getAppData<UserProfile>('profile');
+      if (savedProfile) setProfile(savedProfile);
+
+      // Load Result (Last successful analysis)
+      const savedResult = await dbService.getAppData<AnalysisResponse>('last_result');
+      if (savedResult) setResult(savedResult);
+      
+      // Load Schemes
       const localSchemes = await dbService.getAllSchemes();
       setMasterSchemes(localSchemes);
 
@@ -105,24 +115,27 @@ const App: React.FC = () => {
     init();
   }, []);
 
+  // Save profile to DB whenever it changes
+  useEffect(() => {
+    dbService.saveAppData('profile', profile);
+  }, [profile]);
+
   // Logical Auto-Updates
   useEffect(() => {
     // 1. TSP Auto-Detection
-    if (TSP_DISTRICTS.includes(profile.district)) {
-      setProfile(p => ({ ...p, is_tsp_area: 'Yes' }));
-    } else {
-      setProfile(p => ({ ...p, is_tsp_area: 'No' }));
+    if (profile.state === 'Rajasthan' && TSP_DISTRICTS.includes(profile.district)) {
+      setProfile(p => p.is_tsp_area === 'Yes' ? p : { ...p, is_tsp_area: 'Yes' });
+    } else if (profile.state === 'Rajasthan') {
+      setProfile(p => p.is_tsp_area === 'No' ? p : { ...p, is_tsp_area: 'No' });
     }
-  }, [profile.district]);
+  }, [profile.district, profile.state]);
 
   // Handle gender-based marital status filtering
-  // If male is selected, "Widowed" is often contextually female in Indian govt forms (Widower is less common/different rules)
-  // But strictly, let's just implement the requested logic: Male select kare to widowed show nahi ho.
   const filteredMaritalStatus = profile.gender === 'Male' 
     ? MARITAL_STATUS.filter(m => m !== 'Widowed') 
     : MARITAL_STATUS;
 
-  // Beneficiary Logic: Filter based on gender
+  // Beneficiary Logic
   const filteredBeneficiaryTypes = BENEFICIARY_TYPES.filter(type => {
     if (profile.gender === 'Male' && (type === 'Widow' || type === 'Woman' || type === 'Girl Child')) return false;
     return true;
@@ -134,6 +147,7 @@ const App: React.FC = () => {
     try {
       const res = await analyzeEligibility(profile);
       setResult(res);
+      // Result is saved to DB inside analyzeEligibility
     } catch (err: any) {
       alert(err.message);
       if (err.message.includes("API Key")) setActiveTab('admin');
@@ -143,7 +157,7 @@ const App: React.FC = () => {
 
   const saveConfig = async () => {
     await dbService.setSetting('api_keys', apiKeys);
-    alert("API Keys saved successfully to browser database.");
+    alert("API Keys browser database mein save kar di gayi hain. Yeh hamesha rahengi jab tak aap delete na karein.");
   };
 
   const handleBookmark = (name: string) => {
@@ -160,7 +174,7 @@ const App: React.FC = () => {
              <div className="w-10 h-10 bg-orange-600 rounded-xl flex items-center justify-center text-xl shadow-lg">🇮🇳</div>
              <div>
                <h1 className="text-lg font-black text-slate-800 leading-none">Sarkari Yojana AI</h1>
-               <p className="text-[10px] font-black text-orange-600 uppercase tracking-widest mt-1">Smart Eligibility Analysis</p>
+               <p className="text-[10px] font-black text-orange-600 uppercase tracking-widest mt-1">Smart Analytics Engine</p>
              </div>
           </div>
           <nav className="flex bg-slate-100 p-1 rounded-2xl gap-1">
@@ -194,12 +208,8 @@ const App: React.FC = () => {
                           <label className="block">
                             <span className="text-[10px] font-black text-slate-400 uppercase">लिंग (Gender)</span>
                             <select value={profile.gender} onChange={e => {
-                              const newGender = e.target.value;
-                              let newMarital = profile.marital_status;
-                              if (newGender === 'Male' && profile.marital_status === 'Widowed') {
-                                newMarital = 'Single';
-                              }
-                              setProfile({...profile, gender: newGender, marital_status: newMarital});
+                              const g = e.target.value;
+                              setProfile(prev => ({ ...prev, gender: g, marital_status: g === 'Male' && prev.marital_status === 'Widowed' ? 'Single' : prev.marital_status }));
                             }} className="w-full mt-1 p-3 bg-slate-50 border-0 rounded-xl font-bold text-xs">
                               {GENDER.map(g => <option key={g} value={g}>{g}</option>)}
                             </select>
@@ -238,14 +248,14 @@ const App: React.FC = () => {
                             <input disabled value={profile.is_tsp_area} className="w-full mt-1 p-3 bg-slate-100 border-0 rounded-xl font-black text-xs text-orange-600" />
                           </label>
                           <label className="block">
-                            <span className="text-[10px] font-black text-slate-400 uppercase">Jan-Aadhar</span>
+                            <span className="text-[10px] font-black text-slate-400 uppercase">Jan-Aadhar Card?</span>
                             <select value={profile.jan_aadhar_status} onChange={e => setProfile({...profile, jan_aadhar_status: e.target.value})} className="w-full mt-1 p-3 bg-slate-50 border-0 rounded-xl font-bold text-xs">
                               {YES_NO.map(y => <option key={y} value={y}>{y}</option>)}
                             </select>
                           </label>
                         </div>
                         <label className="block">
-                          <span className="text-[10px] font-black text-slate-400 uppercase">राशन कार्ड टाइप</span>
+                          <span className="text-[10px] font-black text-slate-400 uppercase">राशन कार्ड का प्रकार</span>
                           <select value={profile.ration_card_type} onChange={e => setProfile({...profile, ration_card_type: e.target.value})} className="w-full mt-1 p-3 bg-slate-50 border-0 rounded-xl font-bold text-xs">
                             {RATION_CARD_TYPES.map(r => <option key={r} value={r}>{r}</option>)}
                           </select>
@@ -253,32 +263,31 @@ const App: React.FC = () => {
                       </div>
                     </FormSection>
 
-                    <FormSection title="आर्थिक एवं परिवार" icon="💰">
+                    <FormSection title="परिवार एवं आर्थिक" icon="💰">
                       <div className="space-y-4">
                          <div className="grid grid-cols-2 gap-4">
                             <label className="block">
-                               <span className="text-[8px] font-black text-slate-400 uppercase leading-none">बच्चे (2002 से पहले)</span>
+                               <span className="text-[8px] font-black text-slate-400 uppercase leading-none">बच्चे (June 2002 से पहले)</span>
                                <input type="number" value={profile.children_before_2002} onChange={e => setProfile({...profile, children_before_2002: e.target.value})} className="w-full mt-1 p-3 bg-slate-50 border-0 rounded-xl font-bold text-xs" />
                             </label>
                             <label className="block">
-                               <span className="text-[8px] font-black text-slate-400 uppercase leading-none">बच्चे (2002 के बाद)</span>
+                               <span className="text-[8px] font-black text-slate-400 uppercase leading-none">बच्चे (June 2002 के बाद)</span>
                                <input type="number" value={profile.children_after_2002} onChange={e => setProfile({...profile, children_after_2002: e.target.value})} className="w-full mt-1 p-3 bg-slate-50 border-0 rounded-xl font-bold text-xs" />
                             </label>
                          </div>
                          <label className="block">
-                            <span className="text-[10px] font-black text-slate-400 uppercase">वर्तमान पेंशन स्थिति</span>
+                            <span className="text-[10px] font-black text-slate-400 uppercase">पेंशन की स्थिति</span>
                             <select value={profile.pension_status} onChange={e => setProfile({...profile, pension_status: e.target.value})} className="w-full mt-1 p-3 bg-slate-50 border-0 rounded-xl font-bold text-xs">
                               {PENSION_TYPES.map(p => <option key={p} value={p}>{p}</option>)}
                             </select>
                          </label>
                          <label className="block">
-                            <span className="text-[10px] font-black text-slate-400 uppercase">वार्षिक आय</span>
+                            <span className="text-[10px] font-black text-slate-400 uppercase">वार्षिक आय (Annual Income)</span>
                             <input type="number" value={profile.income} onChange={e => setProfile({...profile, income: e.target.value})} className="w-full mt-1 p-3 bg-slate-50 border-0 rounded-xl font-bold text-xs" />
                          </label>
                       </div>
                     </FormSection>
 
-                    {/* Conditional Fields based on Logical Selection */}
                     {profile.beneficiary_type === 'Student' && (
                       <FormSection title="विद्यार्थी विवरण" icon="🎓">
                          <div className="space-y-4 animate-in slide-in-from-top-4">
@@ -289,8 +298,8 @@ const App: React.FC = () => {
                                </select>
                             </label>
                             <label className="block">
-                               <span className="text-[10px] font-black text-slate-400 uppercase">वर्तमान कक्षा/कोर्स</span>
-                               <input type="text" value={profile.current_class} onChange={e => setProfile({...profile, current_class: e.target.value})} className="w-full mt-1 p-3 bg-slate-50 border-0 rounded-xl font-bold text-xs" placeholder="जैसे 10वीं, बी.ए." />
+                               <span className="text-[10px] font-black text-slate-400 uppercase">वर्तमान कक्षा</span>
+                               <input type="text" value={profile.current_class} onChange={e => setProfile({...profile, current_class: e.target.value})} className="w-full mt-1 p-3 bg-slate-50 border-0 rounded-xl font-bold text-xs" />
                             </label>
                          </div>
                       </FormSection>
@@ -310,7 +319,6 @@ const App: React.FC = () => {
                     )}
 
                   </div>
-                  
                   <button type="submit" disabled={loading} className="w-full py-5 bg-orange-600 text-white font-black rounded-3xl shadow-lg hover:bg-orange-700 transition-all uppercase tracking-widest text-sm disabled:opacity-50">
                     {loading ? 'Analyzing Eligibility...' : 'योजनाएं खोजें 🔍'}
                   </button>
@@ -320,7 +328,7 @@ const App: React.FC = () => {
              {loading && (
                <div className="py-20 text-center space-y-4">
                   <div className="w-12 h-12 border-4 border-orange-100 border-t-orange-600 rounded-full animate-spin mx-auto"></div>
-                  <p className="font-black text-slate-400 uppercase text-[10px] tracking-widest">AI analysis in progress...</p>
+                  <p className="font-black text-slate-400 uppercase text-[10px] tracking-widest">AI data fetch logic in progress...</p>
                </div>
              )}
 
@@ -345,82 +353,44 @@ const App: React.FC = () => {
           </div>
         )}
 
-        {activeTab === 'browse' && (
-          <div className="space-y-6">
-            <div className="flex flex-col md:flex-row gap-4 items-center justify-between">
-              <input type="text" placeholder="योजना खोजें..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="w-full md:max-w-md p-4 bg-white border border-slate-100 rounded-2xl shadow-sm focus:ring-2 focus:ring-orange-500 text-sm font-bold" />
-              <button onClick={() => fetchMasterSchemes('Rajasthan').then(refresh => setMasterSchemes(refresh))} className="px-6 py-4 bg-slate-900 text-white rounded-2xl font-black text-[10px] uppercase">Force Refresh 🔄</button>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {masterSchemes.filter(s => s.yojana_name.toLowerCase().includes(searchTerm.toLowerCase())).map((s, idx) => (
-                <SchemeCard key={idx} scheme={s} isBookmarked={bookmarks.includes(s.yojana_name)} onToggle={() => handleBookmark(s.yojana_name)} />
-              ))}
-            </div>
-          </div>
-        )}
-
-        {activeTab === 'saved' && (
-          <div className="space-y-8">
-            <h2 className="text-xl font-black text-slate-800">पसंदीदा योजनाएं ({bookmarks.length})</h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {masterSchemes.filter(s => bookmarks.includes(s.yojana_name)).map((s, idx) => (
-                <SchemeCard key={idx} scheme={s} isBookmarked={true} onToggle={() => handleBookmark(s.yojana_name)} />
-              ))}
-            </div>
-          </div>
-        )}
-
         {activeTab === 'admin' && (
           <div className="max-w-2xl mx-auto space-y-8">
              {!auth.isAuthenticated ? (
                <div className="bg-white p-10 rounded-[2.5rem] shadow-xl border border-slate-50 text-center space-y-8">
-                  <div className="w-16 h-16 bg-orange-100 rounded-2xl flex items-center justify-center mx-auto text-2xl">🔑</div>
                   <h2 className="text-xl font-black text-slate-800">Admin Control</h2>
                   <form onSubmit={(e) => {
                     e.preventDefault();
                     if(loginForm.email === 'yadavnagji@gmail.com' && loginForm.password === '123456') {
                       setAuth({ isAuthenticated: true, user: 'Nagji Yadav' });
-                    } else { alert("गलत विवरण! (Login: yadavnagji@gmail.com, Pass: 123456)"); }
+                    } else { alert("Login Error!"); }
                   }} className="space-y-4">
-                    <input type="email" required value={loginForm.email} onChange={e => setLoginForm({...loginForm, email: e.target.value})} className="w-full p-4 bg-slate-50 rounded-2xl border-0 font-bold text-xs" placeholder="Email (yadavnagji@gmail.com)" />
-                    <input type="password" required value={loginForm.password} onChange={e => setLoginForm({...loginForm, password: e.target.value})} className="w-full p-4 bg-slate-50 rounded-2xl border-0 font-bold text-xs" placeholder="Password (123456)" />
+                    <input type="email" required value={loginForm.email} onChange={e => setLoginForm({...loginForm, email: e.target.value})} className="w-full p-4 bg-slate-50 rounded-2xl border-0 font-bold text-xs" placeholder="Email" />
+                    <input type="password" required value={loginForm.password} onChange={e => setLoginForm({...loginForm, password: e.target.value})} className="w-full p-4 bg-slate-50 rounded-2xl border-0 font-bold text-xs" placeholder="Password" />
                     <button type="submit" className="w-full py-4 bg-orange-600 text-white font-black rounded-2xl shadow-lg">Login</button>
                   </form>
                </div>
              ) : (
                <div className="bg-white p-10 rounded-[2.5rem] shadow-xl border border-slate-50 space-y-8 animate-slide-up">
                   <div className="flex items-center justify-between border-b pb-6">
-                     <h2 className="text-xl font-black text-slate-800">Config Settings</h2>
+                     <h2 className="text-xl font-black text-slate-800">API Settings</h2>
                      <button onClick={() => setAuth({isAuthenticated: false, user: null})} className="text-[10px] font-black text-slate-400 uppercase">Logout</button>
                   </div>
                   <div className="space-y-6">
                      <div className="space-y-2">
-                        <label className="text-[10px] font-black text-slate-400 uppercase">Gemini API Key (Persistent)</label>
-                        <input type="password" value={apiKeys.gemini} onChange={e => setApiKeys({...apiKeys, gemini: e.target.value})} className="w-full p-4 bg-slate-50 rounded-2xl border-0 font-mono text-xs" placeholder="AI Key Enter Karein..." />
+                        <label className="text-[10px] font-black text-slate-400 uppercase">Input Box 1 (Gemini API Key)</label>
+                        <input type="password" value={apiKeys.gemini} onChange={e => setApiKeys({...apiKeys, gemini: e.target.value})} className="w-full p-4 bg-slate-50 rounded-2xl border-0 font-mono text-xs" placeholder="AI Key Box 1" />
                      </div>
                      <div className="space-y-2">
-                        <label className="text-[10px] font-black text-slate-400 uppercase">Groq API Key (Optional)</label>
-                        <input type="password" value={apiKeys.groq} onChange={e => setApiKeys({...apiKeys, groq: e.target.value})} className="w-full p-4 bg-slate-50 rounded-2xl border-0 font-mono text-xs" placeholder="Groq Key Enter Karein..." />
+                        <label className="text-[10px] font-black text-slate-400 uppercase">Input Box 2 (Groq API Key)</label>
+                        <input type="password" value={apiKeys.groq} onChange={e => setApiKeys({...apiKeys, groq: e.target.value})} className="w-full p-4 bg-slate-50 rounded-2xl border-0 font-mono text-xs" placeholder="AI Key Box 2" />
                      </div>
-                     <button onClick={saveConfig} className="w-full py-4 bg-slate-900 text-white font-black rounded-2xl text-[10px] uppercase tracking-widest shadow-xl">Save Keys to Browser Database</button>
-                     
-                     <div className="pt-6 border-t">
-                        <h3 className="text-xs font-black text-slate-800 uppercase mb-4">Database Tools</h3>
-                        <div className="grid grid-cols-2 gap-4">
-                           <button onClick={() => fetchMasterSchemes('Rajasthan')} className="py-4 bg-blue-50 text-blue-600 font-black rounded-2xl text-[10px] uppercase">Update Rajasthan List</button>
-                           <button onClick={() => fetchMasterSchemes('Central')} className="py-4 bg-purple-50 text-purple-600 font-black rounded-2xl text-[10px] uppercase">Update Central List</button>
-                        </div>
-                     </div>
+                     <button onClick={saveConfig} className="w-full py-4 bg-slate-900 text-white font-black rounded-2xl text-[10px] uppercase tracking-widest shadow-xl">Save & Lock in Database</button>
                   </div>
                </div>
              )}
           </div>
         )}
       </main>
-
-      <footer className="py-20 text-center opacity-30">
-        <p className="text-[10px] font-black uppercase tracking-[0.4em] text-slate-400">Sarkari Yojana AI Ecosystem Pro v4.0</p>
-      </footer>
     </div>
   );
 };
