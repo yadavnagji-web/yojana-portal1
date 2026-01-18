@@ -3,32 +3,21 @@ import { GoogleGenAI } from "@google/genai";
 import { UserProfile, AnalysisResponse, Scheme } from "../types";
 import { dbService } from "./dbService";
 
-const SYSTEM_INSTRUCTION = `You are the Lead Welfare Architect for the Government of India and Rajasthan. 
-Your goal is to provide a comprehensive list of eligible welfare schemes for the 2024-25 and 2026 cycles.
+const SYSTEM_INSTRUCTION = `You are a World-Class Indian Government Welfare Policy Analyst.
+Your task is to identify eligible schemes for a user based on their profile for the 2024-25 and 2026 cycles.
 
-STRICT JSON OUTPUT RULES:
-1. Always return a valid JSON object with the key "eligible_schemes".
-2. If no exact matches are found, you MUST return at least 3-5 schemes where the user might be "CONDITIONAL" based on their category or age.
-3. Use Hindi for text fields like yojana_name, short_purpose_hindi, eligibility_reason_hindi.
-4. Surround the JSON block with ---JSON_START--- and ---JSON_END--- tags.
+STRICT OUTPUT RULES:
+1. LANGUAGE: All descriptive text MUST be in Hindi (Devanagari).
+2. JSON: You must provide a JSON object with the key "eligible_schemes".
+3. NO EMPTY RESULTS: If the user doesn't perfectly match any scheme, you MUST list at least 5 schemes they might be eligible for as "CONDITIONAL" (e.g., if they are a woman, show Mahila schemes; if they are a farmer, show Agri schemes).
+4. ENCAPSULATION: Wrap the JSON between "---JSON_START---" and "---JSON_END---".
 
-JSON Schema for each item:
-{
-  "yojana_name": "Scheme Name in Hindi",
-  "government": "Rajasthan Govt" | "Central Govt",
-  "category": "e.g. Health, Education, Farming",
-  "short_purpose_hindi": "...",
-  "detailed_benefits": "...",
-  "eligibility_criteria": ["..."],
-  "eligibility_status": "ELIGIBLE" | "NOT_ELIGIBLE" | "CONDITIONAL",
-  "eligibility_reason_hindi": "...",
-  "required_documents": ["..."],
-  "form_source": "...",
-  "application_type": "Online" | "Offline" | "Both",
-  "signatures_required": ["..."],
-  "submission_point": "...",
-  "official_pdf_link": "..."
-}`;
+JSON Field Requirements:
+- yojana_name: Scheme name in Hindi.
+- government: "Rajasthan Govt" or "Central Govt".
+- eligibility_status: "ELIGIBLE", "NOT_ELIGIBLE", or "CONDITIONAL".
+- signatures_required: List who needs to sign the form (e.g. Patwari, Sarpanch).
+- submission_point: Where to submit the form.`;
 
 async function hashProfile(profile: UserProfile): Promise<string> {
   const msgUint8 = new TextEncoder().encode(JSON.stringify(profile));
@@ -37,26 +26,31 @@ async function hashProfile(profile: UserProfile): Promise<string> {
   return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-function extractJson(text: string): any {
+function cleanAndParseJson(text: string): any {
   if (!text) return null;
   try {
-    // Attempt 1: Custom tags
-    const customMatch = text.match(/---JSON_START---([\s\S]*?)---JSON_END---/);
-    if (customMatch) return JSON.parse(customMatch[1].trim());
+    // Strategy 1: Delimiter tags
+    const taggedMatch = text.match(/---JSON_START---([\s\S]*?)---JSON_END---/);
+    if (taggedMatch) return JSON.parse(taggedMatch[1].trim());
 
-    // Attempt 2: Markdown block
-    const markdownMatch = text.match(/```json\s*([\s\S]*?)\s*```/i);
-    if (markdownMatch) return JSON.parse(markdownMatch[1].trim());
+    // Strategy 2: Markdown block
+    const mdMatch = text.match(/```json\s*([\s\S]*?)\s*```/i);
+    if (mdMatch) return JSON.parse(mdMatch[1].trim());
 
-    // Attempt 3: Any JSON array
-    const arrayMatch = text.match(/\[\s*\{[\s\S]*\}\s*\]/);
-    if (arrayMatch) return JSON.parse(arrayMatch[0].trim());
+    // Strategy 3: Find first '[' or '{' and last ']' or '}'
+    const firstBracket = text.indexOf('[');
+    const lastBracket = text.lastIndexOf(']');
+    if (firstBracket !== -1 && lastBracket !== -1) {
+      return JSON.parse(text.substring(firstBracket, lastBracket + 1));
+    }
     
-    // Attempt 4: Any JSON object
-    const objectMatch = text.match(/\{\s*"eligible_schemes"[\s\S]*\}/);
-    if (objectMatch) return JSON.parse(objectMatch[0].trim());
+    const firstBrace = text.indexOf('{');
+    const lastBrace = text.lastIndexOf('}');
+    if (firstBrace !== -1 && lastBrace !== -1) {
+      return JSON.parse(text.substring(firstBrace, lastBrace + 1));
+    }
   } catch (e) {
-    console.error("JSON Extraction failed:", e);
+    console.error("JSON Parse Logic Failed:", e);
   }
   return null;
 }
@@ -73,42 +67,42 @@ export async function analyzeEligibility(profile: UserProfile, isDummy: boolean)
   const geminiKey = savedKeys?.gemini || process.env.API_KEY;
   const groqKey = savedKeys?.groq;
 
-  let rawText = "";
+  const prompt = `User Profile: ${JSON.stringify(profile)}.
+Identify ALL possible Rajasthan and Central schemes for 2024-2026.
+Focus on: Agriculture, Social Security, Health (Chiranjeevi/Ayushman), and Student benefits.
+If the user is from Rajasthan, check specific state schemes like Anuprati, Jan Aadhar benefits, etc.
+Provide a clear Hindi summary of the profile analysis and then the JSON block.`;
+
+  let finalRawText = "";
   let groundingSources: any[] = [];
 
-  const prompt = `Perform a deep analysis for this User Profile: ${JSON.stringify(profile)}.
-Identify active schemes for 2024-25 and specifically look for upcoming 2026 scheme announcements or policy shifts for Rajasthan and Central Govt.
-Include application details (signatures from Patwari/Sarpanch and submission points).
-Important: If exact eligibility is unclear, list the scheme as CONDITIONAL and explain what documents are needed.
-Return a detailed Hindi summary followed by the JSON data block.`;
-
-  // --- Attempt GROQ (Fast Reasoning) ---
-  if (groqKey && groqKey.startsWith('gsk_')) {
+  // --- ENGINE 1: GROQ (Fast & Reliable) ---
+  if (groqKey && groqKey.trim() !== "") {
     try {
-      const resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${groqKey}`, 'Content-Type': 'application/json' },
+      const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${groqKey}`,
+          "Content-Type": "application/json"
+        },
         body: JSON.stringify({
-          model: 'llama-3.3-70b-versatile',
+          model: "llama-3.3-70b-versatile",
           messages: [
-            { role: 'system', content: SYSTEM_INSTRUCTION },
-            { role: 'user', content: prompt }
+            { role: "system", content: SYSTEM_INSTRUCTION },
+            { role: "user", content: prompt }
           ],
           temperature: 0.1
         })
       });
-      const data = await resp.json();
-      if (data.choices?.[0]?.message?.content) {
-        rawText = data.choices[0].message.content;
-      }
+      const data = await response.json();
+      finalRawText = data.choices?.[0]?.message?.content || "";
     } catch (e) {
-      console.error("Groq API error:", e);
+      console.warn("Groq Engine Failed, falling back to Gemini...");
     }
   }
 
-  // --- Attempt Gemini 3 Pro (Primary with Search) ---
-  // If Groq failed or as a secondary check if rawText is too short
-  if (geminiKey && (!rawText || rawText.length < 100)) {
+  // --- ENGINE 2: GEMINI (Primary / Fallback) ---
+  if (!finalRawText && geminiKey) {
     try {
       const ai = new GoogleGenAI({ apiKey: geminiKey });
       const result = await ai.models.generateContent({
@@ -119,29 +113,30 @@ Return a detailed Hindi summary followed by the JSON data block.`;
           tools: [{ googleSearch: {} }]
         }
       });
-      rawText = result.text || "";
+      finalRawText = result.text || "";
       groundingSources = result.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
     } catch (e) {
-      console.error("Gemini API error:", e);
-      if (!rawText) throw new Error("दोनों API (Gemini/Groq) काम नहीं कर रही हैं। कृपया Admin में Key चेक करें।");
+      console.error("Gemini Engine Failed:", e);
     }
   }
 
-  if (!rawText) throw new Error("AI सेवा से जवाब नहीं मिला। कृपया इंटरनेट या API Key जांचें।");
+  if (!finalRawText) {
+    throw new Error("Both AI engines failed. Please verify your API Keys in the Admin panel and try again.");
+  }
 
-  const data = extractJson(rawText);
-  let schemes = data?.eligible_schemes || (Array.isArray(data) ? data : []);
+  const parsed = cleanAndParseJson(finalRawText);
+  let schemes = parsed?.eligible_schemes || (Array.isArray(parsed) ? parsed : []);
 
-  // Cleaning and normalizing data
+  // Ensure schemes are formatted correctly
   schemes = schemes.map((s: any) => ({
     ...s,
     government: s.government || 'Rajasthan Govt',
     eligibility_status: s.eligibility_status || 'ELIGIBLE',
-    yojana_name: s.yojana_name || 'अज्ञात योजना'
+    yojana_name: s.yojana_name || 'योजना का नाम'
   }));
 
   const response: AnalysisResponse = {
-    hindiContent: rawText.split(/---JSON_START---|```json|\[/)[0].trim(),
+    hindiContent: finalRawText.split(/---JSON_START---|```json|\[/)[0].trim(),
     eligible_schemes: schemes,
     groundingSources,
     timestamp: Date.now()
@@ -163,11 +158,11 @@ export async function fetchMasterSchemes(category: string) {
     const ai = new GoogleGenAI({ apiKey: key });
     const result = await ai.models.generateContent({
       model: 'gemini-3-pro-preview',
-      contents: `Fetch 15 major ${category} schemes for 2024-2026 with full metadata as JSON.`,
+      contents: `Generate a list of 10 major ${category} schemes for India and Rajasthan for 2024-2026. Return as JSON.`,
       config: { tools: [{ googleSearch: {} }] }
     });
-    const data = extractJson(result.text || "");
-    const list = data?.eligible_schemes || (Array.isArray(data) ? data : []);
+    const parsed = cleanAndParseJson(result.text || "");
+    const list = parsed?.eligible_schemes || (Array.isArray(parsed) ? parsed : []);
     for (const s of list) { if (s.yojana_name) await dbService.upsertScheme(s); }
   } catch (e) { console.error("Sync failed:", e); }
 }
