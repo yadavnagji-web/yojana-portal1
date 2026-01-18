@@ -40,7 +40,7 @@ export interface UserProfile {
   lactating: string;
   family_count: string;
   head_of_family: string;
-  // New logical fields
+  // Logical fields for Rajasthan specific schemes
   jan_aadhar_status: string;
   ration_card_type: string;
   pension_status: string;

@@ -43,7 +43,7 @@ const SchemeCard: React.FC<{ scheme: Scheme; isBookmarked: boolean; onToggle: ()
         <div className="px-5 pb-5 pt-2 border-t border-slate-50 animate-in slide-in-from-top-2">
           <div className="space-y-4">
             <div>
-              <h4 className="text-[10px] font-black text-orange-600 uppercase tracking-widest mb-2">विस्तृत लाभ (Benefits)</h4>
+              <h4 className="text-[10px] font-black text-orange-600 uppercase tracking-widest mb-2">विस्तृत लाभ</h4>
               <p className="text-xs text-slate-700 font-bold leading-relaxed">{scheme.detailed_benefits}</p>
             </div>
             <div className="grid grid-cols-2 gap-4">
@@ -60,15 +60,9 @@ const SchemeCard: React.FC<{ scheme: Scheme; isBookmarked: boolean; onToggle: ()
                 </ul>
               </div>
             </div>
-            <div>
-              <h4 className="text-[10px] font-black text-blue-600 uppercase tracking-widest mb-2">आवेदन प्रक्रिया</h4>
-              <ol className="text-[10px] text-slate-600 space-y-1 font-bold">
-                {scheme.application_process_steps.map((s, i) => <li key={i}>{i+1}. {s}</li>)}
-              </ol>
-            </div>
             <div className="flex gap-2 pt-2">
-              <a href={scheme.online_apply_link} target="_blank" rel="noreferrer" className="flex-1 bg-orange-600 text-white py-2.5 rounded-xl text-[10px] font-black text-center shadow-lg hover:bg-orange-700">Online Apply</a>
-              {scheme.official_pdf_link && <a href={scheme.official_pdf_link} target="_blank" rel="noreferrer" className="flex-1 bg-slate-100 text-slate-600 py-2.5 rounded-xl text-[10px] font-black text-center hover:bg-slate-200">Official PDF</a>}
+              <a href={scheme.online_apply_link} target="_blank" rel="noreferrer" className="flex-1 bg-orange-600 text-white py-2.5 rounded-xl text-[10px] font-black text-center shadow-lg hover:bg-orange-700">Apply Now</a>
+              {scheme.official_pdf_link && <a href={scheme.official_pdf_link} target="_blank" rel="noreferrer" className="flex-1 bg-slate-100 text-slate-600 py-2.5 rounded-xl text-[10px] font-black text-center hover:bg-slate-200">Official Info</a>}
             </div>
           </div>
         </div>
@@ -80,10 +74,10 @@ const SchemeCard: React.FC<{ scheme: Scheme; isBookmarked: boolean; onToggle: ()
 const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'check' | 'browse' | 'saved' | 'admin'>('check');
   const [profile, setProfile] = useState<UserProfile>({
-    gender: 'Female', age: '30', marital_status: 'Widowed', state: 'Rajasthan', district: 'Udaipur', rural_or_urban: 'Rural', is_tsp_area: 'Yes',
-    category: 'ST', beneficiary_type: 'Widow', minority: 'No', disability: 'No', disability_percent: '0', income: '60000', bpl: 'Yes',
-    education: 'Primary', occupation: 'Laborer', labour_card: 'Yes', pregnant: 'No', lactating: 'No', family_count: '4', head_of_family: 'Yes',
-    jan_aadhar_status: 'Yes', ration_card_type: 'BPL', pension_status: 'None', parent_status: 'Both Alive',
+    gender: 'Female', age: '30', marital_status: 'Married', state: 'Rajasthan', district: 'Jaipur', rural_or_urban: 'Rural', is_tsp_area: 'No',
+    category: 'General', beneficiary_type: 'Woman', minority: 'No', disability: 'No', disability_percent: '0', income: '150000', bpl: 'No',
+    education: 'Graduate', occupation: 'Housewife', labour_card: 'No', pregnant: 'No', lactating: 'No', family_count: '4', head_of_family: 'Yes',
+    jan_aadhar_status: 'Yes', ration_card_type: 'APL', pension_status: 'None', parent_status: 'Both Alive',
     children_before_2002: '0', children_after_2002: '0', land_owner: 'No', current_class: 'N/A'
   });
 
@@ -94,55 +88,44 @@ const App: React.FC = () => {
   const [apiKeys, setApiKeys] = useState({ gemini: '', groq: '', openai: '', claude: '' });
   const [masterSchemes, setMasterSchemes] = useState<Scheme[]>([]);
   const [bookmarks, setBookmarks] = useState<string[]>([]);
-  const [aiLogs, setAiLogs] = useState<AIAgentLog[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
-  const [currentProposal, setCurrentProposal] = useState<string | null>(null);
 
-  const resultRef = useRef<HTMLDivElement>(null);
-
-  // Logical Filtering: Beneficiary Types based on Gender and Marital Status
-  const filteredBeneficiaryTypes = BENEFICIARY_TYPES.filter(type => {
-    if (profile.gender === 'Male' && (type === 'Widow' || type === 'Woman' || type === 'Girl Child')) return false;
-    if (profile.marital_status !== 'Widowed' && type === 'Widow') return false;
-    return true;
-  });
-
-  // Effect to handle Rajasthan TSP Auto-Detection
-  useEffect(() => {
-    if (TSP_DISTRICTS.includes(profile.district)) {
-      setProfile(prev => ({ ...prev, is_tsp_area: 'Yes' }));
-    } else {
-      setProfile(prev => ({ ...prev, is_tsp_area: 'No' }));
-    }
-  }, [profile.district]);
-
-  // Persistent Loading from Database
+  // Initial Data Load
   useEffect(() => {
     const init = async () => {
       await dbService.init();
       const savedKeys = await dbService.getSetting<typeof apiKeys>('api_keys');
       if (savedKeys) setApiKeys(savedKeys);
       
-      const marks = localStorage.getItem('sarkari_marks');
-      if (marks) setBookmarks(JSON.parse(marks));
-      
-      const logs = await dbService.getLogs();
-      setAiLogs(logs.reverse());
-      refreshSchemes();
+      const localSchemes = await dbService.getAllSchemes();
+      setMasterSchemes(localSchemes);
+
+      const savedMarks = localStorage.getItem('scheme_bookmarks');
+      if (savedMarks) setBookmarks(JSON.parse(savedMarks));
     };
     init();
   }, []);
 
-  const refreshSchemes = async () => {
-    const data = await dbService.getAllSchemes();
-    setMasterSchemes(data);
-  };
+  // Logical Auto-Updates
+  useEffect(() => {
+    // 1. TSP Auto-Detection
+    if (TSP_DISTRICTS.includes(profile.district)) {
+      setProfile(p => ({ ...p, is_tsp_area: 'Yes' }));
+    } else {
+      setProfile(p => ({ ...p, is_tsp_area: 'No' }));
+    }
+  }, [profile.district]);
 
-  const handleBookmark = (name: string) => {
-    const newMarks = bookmarks.includes(name) ? bookmarks.filter(n => n !== name) : [...bookmarks, name];
-    setBookmarks(newMarks);
-    localStorage.setItem('sarkari_marks', JSON.stringify(newMarks));
-  };
+  // Dynamic Filtering for Marital Status Options
+  const maritalOptions = profile.gender === 'Male' 
+    ? MARITAL_STATUS.filter(m => m !== 'Widowed') // Using common terms: Men are Widowers, but govt forms often use "Widow" for women
+    : MARITAL_STATUS;
+
+  // Filter Beneficiary Types based on logical gender
+  const filteredBeneficiaryTypes = BENEFICIARY_TYPES.filter(type => {
+    if (profile.gender === 'Male' && (type === 'Widow' || type === 'Woman' || type === 'Girl Child')) return false;
+    return true;
+  });
 
   const handleAnalyze = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -150,81 +133,45 @@ const App: React.FC = () => {
     try {
       const res = await analyzeEligibility(profile);
       setResult(res);
-      setTimeout(() => resultRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
-    } catch (err: any) { 
+    } catch (err: any) {
       alert(err.message);
       if (err.message.includes("API Key")) setActiveTab('admin');
     }
     setLoading(false);
   };
 
-  const handleLogin = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (loginForm.email.toLowerCase().trim() === 'yadavnagji@gmail.com' && loginForm.password === '123456') {
-      setAuth({ isAuthenticated: true, user: 'Nagji Yadav' });
-    } else {
-      alert("Invalid Credentials.");
-    }
+  const saveConfig = async () => {
+    await dbService.setSetting('api_keys', apiKeys);
+    alert("API Key browser mein hamesha ke liye save ho gayi hai.");
   };
 
-  const handleAdminAction = async (agent: string, action: string) => {
-    setLoading(true);
-    const logId = Math.random().toString(36).substr(2, 9);
-    const log: AIAgentLog = {
-      id: logId,
-      timestamp: Date.now(),
-      agent,
-      action,
-      description: `AI Agent ${agent} started: ${action}`,
-      status: 'pending'
-    };
-    await dbService.addLog(log);
-    setAiLogs(prev => [log, ...prev]);
-
-    try {
-      if (action === 'Fetch Data') {
-        await fetchMasterSchemes('Rajasthan', true);
-        await fetchMasterSchemes('Central', true);
-      }
-      if (action === 'System Improve') {
-        const proposal = await proposeSystemImprovement();
-        setCurrentProposal(proposal);
-        log.diff = proposal;
-      }
-      log.status = 'applied';
-      log.description = `AI Agent ${agent} successfully completed ${action}`;
-      await dbService.addLog(log);
-      await refreshSchemes();
-    } catch (e: any) {
-      log.status = 'rolled_back';
-      log.description = `Error: ${e.message}`;
-      await dbService.addLog(log);
-      alert("Action failed: " + e.message);
-    }
-    setLoading(false);
+  const handleBookmark = (name: string) => {
+    const newMarks = bookmarks.includes(name) ? bookmarks.filter(n => n !== name) : [...bookmarks, name];
+    setBookmarks(newMarks);
+    localStorage.setItem('scheme_bookmarks', JSON.stringify(newMarks));
   };
 
   return (
-    <div className="min-h-screen bg-[#FDFDFD] font-sans selection:bg-orange-100">
-      <header className="bg-white/80 backdrop-blur-xl border-b border-slate-100 sticky top-0 z-50 py-3 px-4">
+    <div className="min-h-screen bg-[#FDFDFD] font-sans">
+      <header className="bg-white/90 backdrop-blur-md border-b border-slate-100 sticky top-0 z-50 py-3 px-4">
         <div className="max-w-6xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-3">
-             <div className="w-10 h-10 bg-gradient-to-br from-orange-600 to-amber-500 rounded-2xl flex items-center justify-center text-xl shadow-lg shadow-orange-200">🇮🇳</div>
+             <div className="w-10 h-10 bg-orange-600 rounded-xl flex items-center justify-center text-xl shadow-lg">🇮🇳</div>
              <div>
-               <h1 className="text-lg font-black tracking-tight text-slate-800 leading-none">Sarkari Yojana</h1>
-               <p className="text-[10px] font-black text-orange-600 uppercase tracking-widest mt-1">Smart Welfare AI</p>
+               <h1 className="text-lg font-black text-slate-800 leading-none">Sarkari Yojana AI</h1>
+               <p className="text-[10px] font-black text-orange-600 uppercase tracking-widest mt-1">Smart Eligibility Checker</p>
              </div>
           </div>
           <nav className="flex bg-slate-100 p-1 rounded-2xl gap-1">
             {[
               { id: 'check', label: 'पात्रता', icon: '🔍' },
               { id: 'browse', label: 'योजनाएं', icon: '📑' },
-              { id: 'saved', label: 'पसंदीदा', icon: '💖' },
-              { id: 'admin', label: 'एडमिन', icon: '⚙️' }
+              { id: 'saved', label: 'Saved', icon: '💖' },
+              { id: 'admin', label: 'Admin', icon: '⚙️' }
             ].map(tab => (
               <button 
                 key={tab.id} onClick={() => setActiveTab(tab.id as any)}
-                className={`px-4 py-2 rounded-xl font-black text-[10px] uppercase tracking-wider transition-all flex items-center gap-2 ${activeTab === tab.id ? 'bg-white text-orange-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+                className={`px-4 py-2 rounded-xl font-black text-[10px] uppercase transition-all flex items-center gap-2 ${activeTab === tab.id ? 'bg-white text-orange-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
               >
                 <span>{tab.icon}</span> {tab.label}
               </button>
@@ -235,191 +182,152 @@ const App: React.FC = () => {
 
       <main className="max-w-6xl mx-auto px-4 py-8">
         {activeTab === 'check' && (
-          <div className="space-y-8 animate-in fade-in duration-500">
+          <div className="space-y-8">
              {!result && !loading && (
-               <form onSubmit={handleAnalyze} className="bg-white p-8 rounded-[2.5rem] shadow-2xl border border-slate-50 space-y-10">
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-10">
+               <form onSubmit={handleAnalyze} className="bg-white p-8 rounded-[2rem] shadow-xl border border-slate-50 space-y-8 animate-slide-up">
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
                     
                     <FormSection title="व्यक्तिगत प्रोफाइल" icon="👤">
                       <div className="space-y-4">
                         <div className="grid grid-cols-2 gap-4">
-                          <label className="block space-y-1">
-                            <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">लिंग (Gender)</span>
-                            <select value={profile.gender} onChange={e => setProfile({...profile, gender: e.target.value})} className="w-full p-3.5 bg-slate-50 border-0 rounded-2xl font-bold text-xs ring-1 ring-slate-100">
+                          <label className="block">
+                            <span className="text-[10px] font-black text-slate-400 uppercase">लिंग</span>
+                            <select value={profile.gender} onChange={e => setProfile({...profile, gender: e.target.value})} className="w-full mt-1 p-3 bg-slate-50 border-0 rounded-xl font-bold text-xs">
                               {GENDER.map(g => <option key={g} value={g}>{g}</option>)}
                             </select>
                           </label>
-                          <label className="block space-y-1">
-                            <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">आयु (Age)</span>
-                            <input type="number" value={profile.age} onChange={e => setProfile({...profile, age: e.target.value})} className="w-full p-3.5 bg-slate-50 border-0 rounded-2xl font-bold text-xs ring-1 ring-slate-100" />
+                          <label className="block">
+                            <span className="text-[10px] font-black text-slate-400 uppercase">आयु</span>
+                            <input type="number" value={profile.age} onChange={e => setProfile({...profile, age: e.target.value})} className="w-full mt-1 p-3 bg-slate-50 border-0 rounded-xl font-bold text-xs" />
                           </label>
                         </div>
-                        <label className="block space-y-1">
-                          <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">शादी की स्थिति</span>
-                          <select value={profile.marital_status} onChange={e => setProfile({...profile, marital_status: e.target.value})} className="w-full p-3.5 bg-slate-50 border-0 rounded-2xl font-bold text-xs ring-1 ring-slate-100">
-                            {MARITAL_STATUS.map(s => <option key={s} value={s}>{s}</option>)}
+                        <label className="block">
+                          <span className="text-[10px] font-black text-slate-400 uppercase">शादी की स्थिति</span>
+                          <select value={profile.marital_status} onChange={e => setProfile({...profile, marital_status: e.target.value})} className="w-full mt-1 p-3 bg-slate-50 border-0 rounded-xl font-bold text-xs">
+                            {maritalOptions.map(s => <option key={s} value={s}>{s}</option>)}
                           </select>
                         </label>
-                        <label className="block space-y-1">
-                          <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">लाभार्थी श्रेणी</span>
-                          <select value={profile.beneficiary_type} onChange={e => setProfile({...profile, beneficiary_type: e.target.value})} className="w-full p-3.5 bg-slate-50 border-0 rounded-2xl font-bold text-xs ring-1 ring-slate-100">
+                        <label className="block">
+                          <span className="text-[10px] font-black text-slate-400 uppercase">लाभार्थी श्रेणी</span>
+                          <select value={profile.beneficiary_type} onChange={e => setProfile({...profile, beneficiary_type: e.target.value})} className="w-full mt-1 p-3 bg-slate-50 border-0 rounded-xl font-bold text-xs">
                             {filteredBeneficiaryTypes.map(b => <option key={b} value={b}>{b}</option>)}
-                          </select>
-                        </label>
-                        <label className="block space-y-1">
-                          <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">शिक्षा का स्तर</span>
-                          <select value={profile.education} onChange={e => setProfile({...profile, education: e.target.value})} className="w-full p-3.5 bg-slate-50 border-0 rounded-2xl font-bold text-xs ring-1 ring-slate-100">
-                            {EDUCATION_LEVELS.map(l => <option key={l} value={l}>{l}</option>)}
                           </select>
                         </label>
                       </div>
                     </FormSection>
 
-                    <FormSection title="स्थान एवं क्षेत्र" icon="📍">
+                    <FormSection title="स्थान एवं पहचान" icon="📍">
                       <div className="space-y-4">
-                        <label className="block space-y-1">
-                          <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">राज्य</span>
-                          <select value={profile.state} onChange={e => setProfile({...profile, state: e.target.value})} className="w-full p-3.5 bg-slate-50 border-0 rounded-2xl font-bold text-xs ring-1 ring-slate-100">
-                            <option value="Rajasthan">Rajasthan (राजस्थान)</option>
-                          </select>
-                        </label>
-                        <label className="block space-y-1">
-                          <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">जिला (District)</span>
-                          <select value={profile.district} onChange={e => setProfile({...profile, district: e.target.value})} className="w-full p-3.5 bg-slate-50 border-0 rounded-2xl font-bold text-xs ring-1 ring-slate-100">
+                        <label className="block">
+                          <span className="text-[10px] font-black text-slate-400 uppercase">जिला</span>
+                          <select value={profile.district} onChange={e => setProfile({...profile, district: e.target.value})} className="w-full mt-1 p-3 bg-slate-50 border-0 rounded-xl font-bold text-xs">
                             {RAJASTHAN_DISTRICTS.map(d => <option key={d} value={d}>{d}</option>)}
                           </select>
                         </label>
                         <div className="grid grid-cols-2 gap-4">
-                          <label className="block space-y-1">
-                            <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">क्षेत्र</span>
-                            <select value={profile.rural_or_urban} onChange={e => setProfile({...profile, rural_or_urban: e.target.value})} className="w-full p-3.5 bg-slate-50 border-0 rounded-2xl font-bold text-xs ring-1 ring-slate-100">
-                              {AREA_TYPE.map(a => <option key={a} value={a}>{a}</option>)}
-                            </select>
+                          <label className="block">
+                            <span className="text-[10px] font-black text-slate-400 uppercase">TSP क्षेत्र</span>
+                            <input disabled value={profile.is_tsp_area} className="w-full mt-1 p-3 bg-slate-100 border-0 rounded-xl font-bold text-xs text-orange-600" />
                           </label>
-                          <label className="block space-y-1">
-                            <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">TSP Area?</span>
-                            <select value={profile.is_tsp_area} disabled className="w-full p-3.5 bg-slate-100 border-0 rounded-2xl font-bold text-xs ring-1 ring-slate-100 opacity-70">
-                              <option value={profile.is_tsp_area}>{profile.is_tsp_area}</option>
+                          <label className="block">
+                            <span className="text-[10px] font-black text-slate-400 uppercase">Jan-Aadhar</span>
+                            <select value={profile.jan_aadhar_status} onChange={e => setProfile({...profile, jan_aadhar_status: e.target.value})} className="w-full mt-1 p-3 bg-slate-50 border-0 rounded-xl font-bold text-xs">
+                              {YES_NO.map(y => <option key={y} value={y}>{y}</option>)}
                             </select>
                           </label>
                         </div>
-                        <label className="flex items-center gap-2 p-3.5 bg-slate-50 rounded-2xl border border-slate-100 cursor-pointer">
-                          <input type="checkbox" checked={profile.jan_aadhar_status === 'Yes'} onChange={e => setProfile({...profile, jan_aadhar_status: e.target.checked ? 'Yes' : 'No'})} className="rounded text-orange-600" />
-                          <span className="text-[10px] font-black text-slate-500 uppercase">जन-आधार कार्ड है?</span>
-                        </label>
-                      </div>
-                    </FormSection>
-
-                    <FormSection title="आर्थिक एवं सामाजिक" icon="📊">
-                      <div className="space-y-4">
-                        <label className="block space-y-1">
-                          <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">वर्ग (Category)</span>
-                          <select value={profile.category} onChange={e => setProfile({...profile, category: e.target.value})} className="w-full p-3.5 bg-slate-50 border-0 rounded-2xl font-bold text-xs ring-1 ring-slate-100">
-                            {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
-                          </select>
-                        </label>
-                        <label className="block space-y-1">
-                          <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">राशन कार्ड का प्रकार</span>
-                          <select value={profile.ration_card_type} onChange={e => setProfile({...profile, ration_card_type: e.target.value})} className="w-full p-3.5 bg-slate-50 border-0 rounded-2xl font-bold text-xs ring-1 ring-slate-100">
+                        <label className="block">
+                          <span className="text-[10px] font-black text-slate-400 uppercase">राशन कार्ड टाइप</span>
+                          <select value={profile.ration_card_type} onChange={e => setProfile({...profile, ration_card_type: e.target.value})} className="w-full mt-1 p-3 bg-slate-50 border-0 rounded-xl font-bold text-xs">
                             {RATION_CARD_TYPES.map(r => <option key={r} value={r}>{r}</option>)}
                           </select>
                         </label>
-                        <label className="block space-y-1">
-                          <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">वार्षिक आय (Annual Income)</span>
-                          <input type="number" value={profile.income} onChange={e => setProfile({...profile, income: e.target.value})} className="w-full p-3.5 bg-slate-50 border-0 rounded-2xl font-bold text-xs ring-1 ring-slate-100" />
-                        </label>
-                        <label className="block space-y-1">
-                          <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">मिल रही पेंशन</span>
-                          <select value={profile.pension_status} onChange={e => setProfile({...profile, pension_status: e.target.value})} className="w-full p-3.5 bg-slate-50 border-0 rounded-2xl font-bold text-xs ring-1 ring-slate-100">
-                            {PENSION_TYPES.map(p => <option key={p} value={p}>{p}</option>)}
-                          </select>
-                        </label>
                       </div>
                     </FormSection>
 
-                    {/* Conditional Logic: Student Details */}
+                    <FormSection title="परिवार एवं आर्थिक" icon="💰">
+                      <div className="space-y-4">
+                         <div className="grid grid-cols-2 gap-4">
+                            <label className="block">
+                               <span className="text-[8px] font-black text-slate-400 uppercase">बच्चे (Pre-2002)</span>
+                               <input type="number" value={profile.children_before_2002} onChange={e => setProfile({...profile, children_before_2002: e.target.value})} className="w-full mt-1 p-3 bg-slate-50 border-0 rounded-xl font-bold text-xs" />
+                            </label>
+                            <label className="block">
+                               <span className="text-[8px] font-black text-slate-400 uppercase">बच्चे (Post-2002)</span>
+                               <input type="number" value={profile.children_after_2002} onChange={e => setProfile({...profile, children_after_2002: e.target.value})} className="w-full mt-1 p-3 bg-slate-50 border-0 rounded-xl font-bold text-xs" />
+                            </label>
+                         </div>
+                         <label className="block">
+                            <span className="text-[10px] font-black text-slate-400 uppercase">वर्तमान पेंशन स्थिति</span>
+                            <select value={profile.pension_status} onChange={e => setProfile({...profile, pension_status: e.target.value})} className="w-full mt-1 p-3 bg-slate-50 border-0 rounded-xl font-bold text-xs">
+                              {PENSION_TYPES.map(p => <option key={p} value={p}>{p}</option>)}
+                            </select>
+                         </label>
+                         <label className="block">
+                            <span className="text-[10px] font-black text-slate-400 uppercase">वार्षिक आय</span>
+                            <input type="number" value={profile.income} onChange={e => setProfile({...profile, income: e.target.value})} className="w-full mt-1 p-3 bg-slate-50 border-0 rounded-xl font-bold text-xs" />
+                         </label>
+                      </div>
+                    </FormSection>
+
+                    {/* Conditional Logic: Student */}
                     {profile.beneficiary_type === 'Student' && (
                       <FormSection title="विद्यार्थी विवरण" icon="🎓">
-                         <div className="space-y-4 animate-in slide-in-from-top-4">
-                            <label className="block space-y-1">
-                              <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">माता-पिता की स्थिति</span>
-                              <select value={profile.parent_status} onChange={e => setProfile({...profile, parent_status: e.target.value})} className="w-full p-3.5 bg-slate-50 border-0 rounded-2xl font-bold text-xs ring-1 ring-slate-100">
-                                {PARENT_STATUS.map(p => <option key={p} value={p}>{p}</option>)}
-                              </select>
+                         <div className="space-y-4">
+                            <label className="block">
+                               <span className="text-[10px] font-black text-slate-400 uppercase">अभिभावक स्थिति</span>
+                               <select value={profile.parent_status} onChange={e => setProfile({...profile, parent_status: e.target.value})} className="w-full mt-1 p-3 bg-slate-50 border-0 rounded-xl font-bold text-xs">
+                                 {PARENT_STATUS.map(p => <option key={p} value={p}>{p}</option>)}
+                               </select>
                             </label>
-                            <label className="block space-y-1">
-                              <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">वर्तमान कक्षा/कोर्स</span>
-                              <input type="text" value={profile.current_class} onChange={e => setProfile({...profile, current_class: e.target.value})} className="w-full p-3.5 bg-slate-50 border-0 rounded-2xl font-bold text-xs ring-1 ring-slate-100" placeholder="e.g. 10th, B.A." />
+                            <label className="block">
+                               <span className="text-[10px] font-black text-slate-400 uppercase">वर्तमान कक्षा</span>
+                               <input type="text" value={profile.current_class} onChange={e => setProfile({...profile, current_class: e.target.value})} className="w-full mt-1 p-3 bg-slate-50 border-0 rounded-xl font-bold text-xs" />
                             </label>
                          </div>
                       </FormSection>
                     )}
 
-                    {/* Conditional Logic: Farmer Details */}
+                    {/* Conditional Logic: Farmer */}
                     {profile.beneficiary_type === 'Farmer' && (
-                      <FormSection title="किसान विवरण" icon="🚜">
-                         <div className="space-y-4 animate-in slide-in-from-top-4">
-                            <label className="block space-y-1">
-                              <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">स्वयं की कृषि भूमि है?</span>
-                              <select value={profile.land_owner} onChange={e => setProfile({...profile, land_owner: e.target.value})} className="w-full p-3.5 bg-slate-50 border-0 rounded-2xl font-bold text-xs ring-1 ring-slate-100">
-                                {YES_NO.map(y => <option key={y} value={y}>{y}</option>)}
-                              </select>
+                      <FormSection title="कृषि विवरण" icon="🚜">
+                         <div className="space-y-4">
+                            <label className="block">
+                               <span className="text-[10px] font-black text-slate-400 uppercase">स्वयं की भूमि?</span>
+                               <select value={profile.land_owner} onChange={e => setProfile({...profile, land_owner: e.target.value})} className="w-full mt-1 p-3 bg-slate-50 border-0 rounded-xl font-bold text-xs">
+                                 {YES_NO.map(y => <option key={y} value={y}>{y}</option>)}
+                               </select>
                             </label>
                          </div>
                       </FormSection>
                     )}
-
-                    {/* Logical Family Counts */}
-                    <FormSection title="परिवार एवं बच्चे" icon="👨‍👩‍👧‍👦">
-                       <div className="space-y-4">
-                          <div className="grid grid-cols-2 gap-4">
-                             <label className="block space-y-1">
-                               <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest leading-tight">बच्चे (2002 से पहले)</span>
-                               <input type="number" value={profile.children_before_2002} onChange={e => setProfile({...profile, children_before_2002: e.target.value})} className="w-full p-3.5 bg-slate-50 border-0 rounded-2xl font-bold text-xs ring-1 ring-slate-100" />
-                             </label>
-                             <label className="block space-y-1">
-                               <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest leading-tight">बच्चे (2002 के बाद)</span>
-                               <input type="number" value={profile.children_after_2002} onChange={e => setProfile({...profile, children_after_2002: e.target.value})} className="w-full p-3.5 bg-slate-50 border-0 rounded-2xl font-bold text-xs ring-1 ring-slate-100" />
-                             </label>
-                          </div>
-                          <div className="flex flex-col gap-2 pt-2">
-                             <label className="flex items-center gap-2 p-3 bg-slate-50 rounded-xl border border-slate-100 cursor-pointer">
-                               <input type="checkbox" checked={profile.labour_card === 'Yes'} onChange={e => setProfile({...profile, labour_card: e.target.checked ? 'Yes' : 'No'})} className="rounded text-orange-600" />
-                               <span className="text-[10px] font-black text-slate-500 uppercase tracking-tighter">श्रम कार्ड (Labour Card) है?</span>
-                             </label>
-                          </div>
-                       </div>
-                    </FormSection>
 
                   </div>
                   
-                  <button type="submit" disabled={loading} className="w-full py-5 bg-orange-600 text-white font-black rounded-3xl shadow-2xl hover:bg-orange-700 transition-all uppercase tracking-[0.2em] text-sm disabled:opacity-50">
-                    {loading ? 'AI द्वारा विश्लेषण जारी है...' : 'पात्र योजनाएं खोजें 🔍'}
+                  <button type="submit" disabled={loading} className="w-full py-5 bg-orange-600 text-white font-black rounded-3xl shadow-lg hover:bg-orange-700 transition-all uppercase tracking-widest text-sm disabled:opacity-50">
+                    {loading ? 'Analyzing with AI...' : 'योजनाएं खोजें 🔍'}
                   </button>
                </form>
              )}
 
              {loading && (
-               <div className="py-20 text-center space-y-6">
-                  <div className="w-16 h-16 border-4 border-orange-100 border-t-orange-600 rounded-full animate-spin mx-auto"></div>
-                  <div className="space-y-2">
-                    <p className="font-black text-slate-800 uppercase text-xs tracking-widest">AI द्वारा विश्लेषण जारी है...</p>
-                    <p className="text-[10px] text-slate-400 font-bold max-w-xs mx-auto">हम सरकारी डेटाबेस और पात्रता नियमों की जांच कर रहे हैं।</p>
-                  </div>
+               <div className="py-20 text-center space-y-4">
+                  <div className="w-12 h-12 border-4 border-orange-100 border-t-orange-600 rounded-full animate-spin mx-auto"></div>
+                  <p className="font-black text-slate-400 uppercase text-[10px] tracking-widest">AI analysis in progress...</p>
                </div>
              )}
 
              {result && !loading && (
-               <div ref={resultRef} className="space-y-8 animate-in slide-in-from-bottom-10 duration-700">
-                 <div className="bg-white p-8 rounded-[2.5rem] shadow-xl border border-slate-100">
+               <div className="space-y-8 animate-slide-up">
+                 <div className="bg-white p-8 rounded-[2rem] shadow-xl border border-slate-100">
                    <div className="flex items-center justify-between mb-8">
-                     <h2 className="text-2xl font-black text-slate-800">पात्र योजनाएं ({result.eligible_schemes.length})</h2>
-                     <button onClick={() => setResult(null)} className="text-[10px] font-black text-orange-600 bg-orange-50 px-5 py-2.5 rounded-2xl hover:bg-orange-100 uppercase tracking-widest">🔄 नया सर्च</button>
+                     <h2 className="text-xl font-black text-slate-800">पात्र योजनाएं ({result.eligible_schemes.length})</h2>
+                     <button onClick={() => setResult(null)} className="text-[10px] font-black text-orange-600 bg-orange-50 px-4 py-2 rounded-xl">नया सर्च</button>
                    </div>
-                   <div className="bg-orange-50/30 p-6 rounded-[2rem] border border-orange-100 mb-10 text-slate-700 font-bold text-sm leading-relaxed whitespace-pre-wrap">
+                   <div className="bg-slate-50 p-6 rounded-2xl mb-8 text-sm text-slate-700 leading-relaxed whitespace-pre-wrap font-medium border border-slate-100">
                       {result.hindiContent}
                    </div>
-                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       {result.eligible_schemes.map((s, idx) => (
                         <SchemeCard key={idx} scheme={s} isBookmarked={bookmarks.includes(s.yojana_name)} onToggle={() => handleBookmark(s.yojana_name)} />
                       ))}
@@ -432,12 +340,9 @@ const App: React.FC = () => {
 
         {activeTab === 'browse' && (
           <div className="space-y-6">
-            <div className="flex flex-col md:flex-row gap-4 items-center justify-between bg-white p-4 rounded-3xl shadow-sm border border-slate-50">
-              <div className="relative flex-1 w-full">
-                <input type="text" placeholder="योजना खोजें..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="w-full p-4 bg-slate-50 border-0 rounded-2xl focus:ring-2 focus:ring-orange-500 pl-12 text-sm font-bold" />
-                <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 text-lg">🔍</span>
-              </div>
-              <button onClick={refreshSchemes} className="px-6 py-4 bg-orange-600 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-orange-700 transition-all">Refresh List 🔄</button>
+            <div className="flex flex-col md:flex-row gap-4 items-center justify-between">
+              <input type="text" placeholder="योजना खोजें..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="w-full md:max-w-md p-4 bg-white border border-slate-100 rounded-2xl shadow-sm focus:ring-2 focus:ring-orange-500 text-sm font-bold" />
+              <button onClick={() => fetchMasterSchemes('Rajasthan').then(refresh => setMasterSchemes(refresh))} className="px-6 py-4 bg-slate-900 text-white rounded-2xl font-black text-[10px] uppercase">Force Refresh 🔄</button>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {masterSchemes.filter(s => s.yojana_name.toLowerCase().includes(searchTerm.toLowerCase())).map((s, idx) => (
@@ -449,145 +354,61 @@ const App: React.FC = () => {
 
         {activeTab === 'saved' && (
           <div className="space-y-8">
-            <h2 className="text-2xl font-black text-slate-800 flex items-center gap-3"><span>💖</span> पसंदीदा योजनाएं ({bookmarks.length})</h2>
-            {bookmarks.length > 0 ? (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {masterSchemes.filter(s => bookmarks.includes(s.yojana_name)).map((s, idx) => (
-                  <SchemeCard key={idx} scheme={s} isBookmarked={true} onToggle={() => handleBookmark(s.yojana_name)} />
-                ))}
-              </div>
-            ) : (
-              <div className="py-32 text-center border-4 border-dashed border-slate-100 rounded-[3rem] space-y-4">
-                <p className="text-slate-400 font-black text-lg">कोई पसंदीदा योजना नहीं है।</p>
-                <button onClick={() => setActiveTab('browse')} className="text-orange-600 font-black text-xs uppercase tracking-widest underline">योजनाएं खोजें</button>
-              </div>
-            )}
+            <h2 className="text-xl font-black text-slate-800">पसंदीदा योजनाएं ({bookmarks.length})</h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {masterSchemes.filter(s => bookmarks.includes(s.yojana_name)).map((s, idx) => (
+                <SchemeCard key={idx} scheme={s} isBookmarked={true} onToggle={() => handleBookmark(s.yojana_name)} />
+              ))}
+            </div>
           </div>
         )}
 
         {activeTab === 'admin' && (
-          <div className="max-w-4xl mx-auto space-y-8">
+          <div className="max-w-2xl mx-auto space-y-8">
              {!auth.isAuthenticated ? (
-               <div className="bg-white p-12 rounded-[3rem] shadow-2xl border border-slate-50 text-center space-y-10 animate-in zoom-in-95">
-                  <div className="w-20 h-20 bg-orange-100 rounded-[2rem] flex items-center justify-center mx-auto text-4xl shadow-inner">🔑</div>
-                  <h2 className="text-2xl font-black text-slate-800 uppercase tracking-tight">Admin Control</h2>
-                  <form onSubmit={handleLogin} className="space-y-4 max-w-sm mx-auto">
-                    <input type="email" required value={loginForm.email} onChange={e => setLoginForm({...loginForm, email: e.target.value})} className="w-full p-4.5 bg-slate-50 rounded-2xl border border-slate-100 font-bold text-xs" placeholder="UserID (yadavnagji@gmail.com)" />
-                    <input type="password" required value={loginForm.password} onChange={e => setLoginForm({...loginForm, password: e.target.value})} className="w-full p-4.5 bg-slate-50 rounded-2xl border border-slate-100 font-bold text-xs" placeholder="Password (123456)" />
-                    <button type="submit" className="w-full py-4.5 bg-orange-600 text-white font-black rounded-2xl shadow-xl hover:bg-orange-700 transition-all uppercase tracking-widest">Login</button>
+               <div className="bg-white p-10 rounded-[2.5rem] shadow-xl border border-slate-50 text-center space-y-8">
+                  <div className="w-16 h-16 bg-orange-100 rounded-2xl flex items-center justify-center mx-auto text-2xl">🔑</div>
+                  <h2 className="text-xl font-black text-slate-800">Admin Control</h2>
+                  <form onSubmit={(e) => {
+                    e.preventDefault();
+                    if(loginForm.email === 'yadavnagji@gmail.com' && loginForm.password === '123456') {
+                      setAuth({ isAuthenticated: true, user: 'Nagji Yadav' });
+                    } else { alert("Galat details!"); }
+                  }} className="space-y-4">
+                    <input type="email" required value={loginForm.email} onChange={e => setLoginForm({...loginForm, email: e.target.value})} className="w-full p-4 bg-slate-50 rounded-2xl border-0 font-bold text-xs" placeholder="Email (yadavnagji@gmail.com)" />
+                    <input type="password" required value={loginForm.password} onChange={e => setLoginForm({...loginForm, password: e.target.value})} className="w-full p-4 bg-slate-50 rounded-2xl border-0 font-bold text-xs" placeholder="Password (123456)" />
+                    <button type="submit" className="w-full py-4 bg-orange-600 text-white font-black rounded-2xl shadow-lg">Login</button>
                   </form>
                </div>
              ) : (
-               <div className="space-y-8 animate-in slide-in-from-bottom-5">
-                  <div className="bg-white p-6 rounded-[2rem] shadow-xl flex items-center justify-between border border-slate-100">
-                     <div className="flex items-center gap-4">
-                        <div className="w-12 h-12 bg-green-100 text-green-600 rounded-xl flex items-center justify-center font-black">AI</div>
-                        <div>
-                           <h2 className="text-xl font-black text-slate-800">Smart AI Admin Panel</h2>
-                           <p className="text-[10px] font-black text-green-600 uppercase tracking-widest">Logged in as: {auth.user}</p>
-                        </div>
-                     </div>
-                     <button onClick={() => setAuth({isAuthenticated: false, user: null})} className="px-5 py-2.5 bg-slate-100 text-slate-500 font-black rounded-2xl hover:bg-red-50 hover:text-red-600 text-[10px] uppercase tracking-widest">Logout</button>
+               <div className="bg-white p-10 rounded-[2.5rem] shadow-xl border border-slate-50 space-y-8 animate-slide-up">
+                  <div className="flex items-center justify-between border-b pb-6">
+                     <h2 className="text-xl font-black text-slate-800">Config Settings</h2>
+                     <button onClick={() => setAuth({isAuthenticated: false, user: null})} className="text-[10px] font-black text-slate-400 uppercase">Logout</button>
                   </div>
-
-                  <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-                    {[
-                      { label: 'Data Extraction', agent: 'Agent 1', action: 'Fetch Data', color: 'bg-blue-600' },
-                      { label: 'Link Eligibility', agent: 'Agent 2', action: 'Map Logic', color: 'bg-purple-600' },
-                      { label: 'Detect Changes', agent: 'Agent 3', action: 'Hash Compare', color: 'bg-emerald-600' },
-                      { label: 'Simplify Lang', agent: 'Agent 4', action: 'Transliterate', color: 'bg-amber-600' },
-                      { label: 'System Improve', agent: 'Agent 5', action: 'System Improve', color: 'bg-rose-600' }
-                    ].map(btn => (
-                      <button 
-                        key={btn.label} 
-                        disabled={loading}
-                        onClick={() => handleAdminAction(btn.agent, btn.action)} 
-                        className={`${btn.color} text-white p-4 rounded-3xl shadow-lg hover:scale-105 active:scale-95 transition-all text-center space-y-1 disabled:opacity-50`}
-                      >
-                        <div className="text-[9px] font-black uppercase opacity-60">{btn.agent}</div>
-                        <div className="text-[11px] font-black leading-tight">{btn.label}</div>
-                      </button>
-                    ))}
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                     <div className="bg-white p-8 rounded-[2.5rem] shadow-xl border border-slate-100 space-y-6">
-                        <h3 className="text-sm font-black text-slate-800 uppercase tracking-widest">Configuration (Database)</h3>
-                        <div className="space-y-4">
-                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                             <div className="space-y-1">
-                                <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Gemini API Key</label>
-                                <input type="password" value={apiKeys.gemini} onChange={e => setApiKeys({...apiKeys, gemini: e.target.value})} className="w-full p-3 bg-slate-50 rounded-xl border border-slate-100 font-mono text-[10px] focus:ring-2 focus:ring-orange-500" placeholder="Jemini Key" />
-                             </div>
-                             <div className="space-y-1">
-                                <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">OpenAI API Key</label>
-                                <input type="password" value={apiKeys.openai} onChange={e => setApiKeys({...apiKeys, openai: e.target.value})} className="w-full p-3 bg-slate-50 rounded-xl border border-slate-100 font-mono text-[10px] focus:ring-2 focus:ring-orange-500" placeholder="OpenAI Key" />
-                             </div>
-                             <div className="space-y-1">
-                                <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Groq API Key</label>
-                                <input type="password" value={apiKeys.groq} onChange={e => setApiKeys({...apiKeys, groq: e.target.value})} className="w-full p-3 bg-slate-50 rounded-xl border border-slate-100 font-mono text-[10px] focus:ring-2 focus:ring-orange-500" placeholder="Groq Key" />
-                             </div>
-                             <div className="space-y-1">
-                                <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Claude API Key</label>
-                                <input type="password" value={apiKeys.claude} onChange={e => setApiKeys({...apiKeys, claude: e.target.value})} className="w-full p-3 bg-slate-50 rounded-xl border border-slate-100 font-mono text-[10px] focus:ring-2 focus:ring-orange-500" placeholder="Claude Key" />
-                             </div>
-                           </div>
-                           <button 
-                             onClick={async () => {
-                               await dbService.setSetting('api_keys', apiKeys);
-                               alert("Config saved successfully to IndexedDB.");
-                             }} 
-                             className="w-full py-4 bg-slate-900 text-white font-black rounded-2xl text-[10px] uppercase tracking-widest shadow-xl hover:bg-black"
-                           >
-                             Save Permanent Config
-                           </button>
-                        </div>
+                  <div className="space-y-6">
+                     <div className="space-y-2">
+                        <label className="text-[10px] font-black text-slate-400 uppercase">Gemini API Key (Persistent)</label>
+                        <input type="password" value={apiKeys.gemini} onChange={e => setApiKeys({...apiKeys, gemini: e.target.value})} className="w-full p-4 bg-slate-50 rounded-2xl border-0 font-mono text-xs" placeholder="AI Key Enter Karein..." />
                      </div>
-
-                     <div className="bg-white p-8 rounded-[2.5rem] shadow-xl border border-slate-100 space-y-6">
-                        <h3 className="text-sm font-black text-slate-800 uppercase tracking-widest">AI Agent Logs</h3>
-                        <div className="max-h-[300px] overflow-y-auto space-y-3 pr-2 scrollbar-thin scrollbar-thumb-orange-200">
-                           {aiLogs.length > 0 ? aiLogs.map(log => (
-                             <div key={log.id} className="p-4 bg-slate-50 rounded-2xl border border-slate-100 space-y-2">
-                                <div className="flex items-center justify-between">
-                                   <div className="text-[9px] font-black text-slate-400 uppercase">{log.agent} | {new Date(log.timestamp).toLocaleTimeString()}</div>
-                                   <div className={`text-[8px] font-black uppercase px-2 py-0.5 rounded ${log.status === 'applied' ? 'bg-green-100 text-green-600' : log.status === 'pending' ? 'bg-orange-100 text-orange-600' : 'bg-red-100 text-red-600'}`}>
-                                     {log.status}
-                                   </div>
-                                </div>
-                                <div className="text-xs font-bold text-slate-700 leading-tight">{log.description}</div>
-                                {log.diff && (
-                                  <button onClick={() => setCurrentProposal(log.diff || null)} className="text-[9px] font-black text-blue-600 underline">View System Proposal</button>
-                                )}
-                             </div>
-                           )) : <p className="text-center py-10 text-[10px] text-slate-300 font-black">No activity logs yet.</p>}
+                     <button onClick={saveConfig} className="w-full py-4 bg-slate-900 text-white font-black rounded-2xl text-[10px] uppercase tracking-widest shadow-xl">Save API Key to Browser Database</button>
+                     
+                     <div className="pt-6 border-t">
+                        <h3 className="text-xs font-black text-slate-800 uppercase mb-4">Database Tools</h3>
+                        <div className="grid grid-cols-2 gap-4">
+                           <button onClick={() => fetchMasterSchemes('Rajasthan')} className="py-4 bg-blue-50 text-blue-600 font-black rounded-2xl text-[10px] uppercase">Update Rajasthan List</button>
+                           <button onClick={() => fetchMasterSchemes('Central')} className="py-4 bg-purple-50 text-purple-600 font-black rounded-2xl text-[10px] uppercase">Update Central List</button>
                         </div>
                      </div>
                   </div>
-
-                  {currentProposal && (
-                    <div className="bg-white p-8 rounded-[2.5rem] shadow-2xl border border-blue-100 animate-in slide-in-from-top-4">
-                       <div className="flex items-center justify-between mb-6">
-                          <h3 className="text-lg font-black text-blue-800">AI Coding Agent Proposal (Agent 5)</h3>
-                          <button onClick={() => setCurrentProposal(null)} className="text-slate-400 hover:text-slate-600">✕</button>
-                       </div>
-                       <div className="bg-slate-900 rounded-3xl p-6 overflow-x-auto">
-                          <pre className="text-blue-400 text-xs font-mono leading-relaxed whitespace-pre-wrap">{currentProposal}</pre>
-                       </div>
-                       <div className="flex gap-4 mt-6">
-                          <button onClick={() => alert("Implementation logic would execute here in production.")} className="flex-1 py-4 bg-blue-600 text-white font-black rounded-2xl text-[10px] uppercase tracking-widest">Approve & Deploy</button>
-                          <button onClick={() => setCurrentProposal(null)} className="flex-1 py-4 bg-slate-100 text-slate-400 font-black rounded-2xl text-[10px] uppercase tracking-widest">Reject Proposal</button>
-                       </div>
-                    </div>
-                  )}
                </div>
              )}
           </div>
         )}
       </main>
 
-      <footer className="py-20 text-center opacity-40">
-        <p className="text-[10px] font-black uppercase tracking-[0.4em] text-slate-400">Sarkari Yojana AI Ecosystem Pro v3.5</p>
+      <footer className="py-20 text-center opacity-30">
+        <p className="text-[10px] font-black uppercase tracking-[0.4em] text-slate-400">Sarkari Yojana AI Ecosystem Pro v4.0</p>
       </footer>
     </div>
   );

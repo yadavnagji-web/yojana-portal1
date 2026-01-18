@@ -3,13 +3,9 @@ import { GoogleGenAI } from "@google/genai";
 import { UserProfile, AnalysisResponse, Scheme } from "../types";
 import { dbService } from "./dbService";
 
-const SYSTEM_INSTRUCTION = `You are a FULL-STACK GOVERNMENT WELFARE PLATFORM AI.
-You act as 5 AI AGENTS simultaneously:
-1. DATA EXTRACTION: Fetch verified data from govt portals (Jan Soochna, MyScheme).
-2. ELIGIBILITY LINKING: If a user matches one condition, link all other relevant schemes.
-3. CHANGE DETECTION: Compare scheme updates accurately.
-4. LANGUAGE SIMPLIFICATION: Use bullet points and simple Hindi.
-5. AI CODING: Propose logic improvements.
+const SYSTEM_INSTRUCTION = `You are an expert Indian Government Welfare Scheme Analyst.
+Analyze user profiles against Central and Rajasthan state schemes.
+PRIORITY: Rajasthan Govt > Central Govt. Focus on TSP/Tribal areas for Rajasthan.
 
 STRICT JSON OUTPUT FORMAT FOR SCHEMES:
 {
@@ -29,30 +25,26 @@ STRICT JSON OUTPUT FORMAT FOR SCHEMES:
   "scheme_status": "NEW" | "UPDATED" | "ACTIVE" | "EXPIRED"
 }
 
-PRIORITY: Rajasthan Govt > Central Govt. Focus on TSP/Tribal areas for Rajasthan.
-NEVER duplicate schemes. Use simple Hindi bullet points.`;
+Respond in simple Hindi for the content part. Use bullet points.`;
 
-async function getAIClient(customKey?: string) {
-  // Check IndexedDB first (Saved in browser)
+async function getAIClient() {
+  // Check browser-level database first
   const dbKeys = await dbService.getSetting<{ gemini: string }>('api_keys');
-  // Fallback to Env variable
-  const apiKey = customKey || dbKeys?.gemini || process.env.API_KEY;
+  const apiKey = dbKeys?.gemini || process.env.API_KEY;
   
-  if (!apiKey || apiKey === "") {
-    throw new Error("API Key missing. Please set it in the Admin Panel once.");
+  if (!apiKey || apiKey.trim() === "") {
+    throw new Error("API Key set nahi hai. Kripya Admin Panel mein API Key darj karein.");
   }
   return new GoogleGenAI({ apiKey });
 }
 
-export async function fetchMasterSchemes(category: 'Central' | 'Rajasthan', forceRefresh = false): Promise<Scheme[]> {
+export async function fetchMasterSchemes(category: 'Central' | 'Rajasthan'): Promise<Scheme[]> {
   const ai = await getAIClient();
-  const prompt = `Perform DATA EXTRACTION for 20 verified ${category} government schemes (2024-2025). 
-  Include: Rajasthan TSP/Tribal Area specific schemes. 
-  Output ONLY a raw JSON array of objects following the STRICT JSON format.`;
+  const prompt = `2024-2025 ki pramukh ${category} sarkari yojanaon ki list nikaalein. Output only JSON array.`;
 
   try {
     const response = await ai.models.generateContent({
-      model: 'gemini-3-pro-preview',
+      model: 'gemini-3-flash-preview',
       contents: prompt,
       config: { systemInstruction: SYSTEM_INSTRUCTION, tools: [{ googleSearch: {} }] },
     });
@@ -67,7 +59,7 @@ export async function fetchMasterSchemes(category: 'Central' | 'Rajasthan', forc
       return fetched;
     }
   } catch (err) {
-    console.error("Agent 1 Extraction Error:", err);
+    console.error("Fetch Error:", err);
     throw err;
   }
   return await dbService.getAllSchemes();
@@ -79,29 +71,25 @@ export async function analyzeEligibility(profile: UserProfile): Promise<Analysis
   const context = localSchemes.map(s => s.yojana_name).join(", ");
 
   const prompt = `
-  AGENT 2 & 4: Analyze eligibility for user:
-  Profile: ${JSON.stringify(profile)}
-  Cached context: ${context}
+  Analyze eligibility for: ${JSON.stringify(profile)}
+  Context: ${context}
   
-  Special attention to:
-  - Jan-Aadhar Status: ${profile.jan_aadhar_status}
+  User Specifics:
+  - Jan-Aadhar: ${profile.jan_aadhar_status}
   - Ration Card: ${profile.ration_card_type}
-  - Family Children (Pre-2002: ${profile.children_before_2002}, Post-2002: ${profile.children_after_2002})
+  - Pension: ${profile.pension_status}
+  - Children: ${profile.children_before_2002} (Pre-2002), ${profile.children_after_2002} (Post-2002)
+  - Student Status: ${profile.parent_status} / ${profile.current_class}
   
-  1. Identify ALL eligible schemes (Rajasthan & Central).
-  2. For matched conditions (e.g. Widow, ST, TSP), link ALL shared schemes.
-  3. Simplify output into Hindi bullet points.
-  
-  Return format:
+  Find matched schemes. Return format:
   ---JSON_START---
-  { "eligible_schemes": [...Strict JSON objects...] }
+  { "eligible_schemes": [...] }
   ---JSON_END---
-  
-  Intro Content: Hindi summary explaining WHY user is eligible.`;
+  Summary in Hindi before JSON.`;
 
   try {
     const response = await ai.models.generateContent({
-      model: 'gemini-3-pro-preview',
+      model: 'gemini-3-flash-preview',
       contents: prompt,
       config: { systemInstruction: SYSTEM_INSTRUCTION, tools: [{ googleSearch: {} }] },
     });
@@ -115,7 +103,7 @@ export async function analyzeEligibility(profile: UserProfile): Promise<Analysis
         const data = JSON.parse(jsonMatch[1]);
         eligible_schemes = data.eligible_schemes || [];
       } catch (e) {
-        console.error("JSON Parse Error inside tags", e);
+        console.error("JSON Parse Error", e);
       }
     }
 
@@ -125,28 +113,18 @@ export async function analyzeEligibility(profile: UserProfile): Promise<Analysis
       groundingSources: response.candidates?.[0]?.groundingMetadata?.groundingChunks || []
     };
   } catch (err) {
-    console.error("Eligibility Analysis Error:", err);
+    console.error("Analysis Error:", err);
     throw err;
   }
 }
 
 export async function proposeSystemImprovement(): Promise<string> {
   const ai = await getAIClient();
-  const prompt = `AGENT 5 (CODING): Analyze current platform behavior for Indian Welfare Schemes. Suggest ONE logic optimization or schema update. 
-  Provide your response in clear sections:
-  1. EXPLANATION: What needs to be improved.
-  2. CODE DIFF: The suggested code changes.
-  3. ROLLBACK PLAN: How to revert if it fails.`;
-
-  try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-3-pro-preview',
-      contents: prompt,
-      config: { systemInstruction: SYSTEM_INSTRUCTION },
-    });
-    return response.text || "No proposal generated.";
-  } catch (err) {
-    console.error("Agent 5 Error:", err);
-    return "Error generating improvement proposal.";
-  }
+  const prompt = `System improvements for Welfare AI. Analyze logic and suggest one optimization with code.`;
+  const response = await ai.models.generateContent({
+    model: 'gemini-3-flash-preview',
+    contents: prompt,
+    config: { systemInstruction: SYSTEM_INSTRUCTION },
+  });
+  return response.text || "No proposal.";
 }
