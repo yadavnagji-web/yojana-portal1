@@ -27,7 +27,7 @@ export interface UserProfile {
   rural_or_urban: string;
   is_tsp_area: string;
   category: string;
-  beneficiary_type: string; // Student, Youth, Widow, etc.
+  beneficiary_type: string;
   minority: string;
   disability: string;
   disability_percent: string;
@@ -40,6 +40,15 @@ export interface UserProfile {
   lactating: string;
   family_count: string;
   head_of_family: string;
+  // New logical fields
+  jan_aadhar_status: string;
+  ration_card_type: string;
+  pension_status: string;
+  parent_status: string;
+  children_before_2002: string;
+  children_after_2002: string;
+  land_owner: string;
+  current_class: string;
 }
 
 export interface AnalysisResponse {

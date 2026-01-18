@@ -33,9 +33,14 @@ PRIORITY: Rajasthan Govt > Central Govt. Focus on TSP/Tribal areas for Rajasthan
 NEVER duplicate schemes. Use simple Hindi bullet points.`;
 
 async function getAIClient(customKey?: string) {
+  // Check IndexedDB first (Saved in browser)
   const dbKeys = await dbService.getSetting<{ gemini: string }>('api_keys');
+  // Fallback to Env variable
   const apiKey = customKey || dbKeys?.gemini || process.env.API_KEY;
-  if (!apiKey) throw new Error("API Key not found. Please set it in Admin Panel.");
+  
+  if (!apiKey || apiKey === "") {
+    throw new Error("API Key missing. Please set it in the Admin Panel once.");
+  }
   return new GoogleGenAI({ apiKey });
 }
 
@@ -77,6 +82,11 @@ export async function analyzeEligibility(profile: UserProfile): Promise<Analysis
   AGENT 2 & 4: Analyze eligibility for user:
   Profile: ${JSON.stringify(profile)}
   Cached context: ${context}
+  
+  Special attention to:
+  - Jan-Aadhar Status: ${profile.jan_aadhar_status}
+  - Ration Card: ${profile.ration_card_type}
+  - Family Children (Pre-2002: ${profile.children_before_2002}, Post-2002: ${profile.children_after_2002})
   
   1. Identify ALL eligible schemes (Rajasthan & Central).
   2. For matched conditions (e.g. Widow, ST, TSP), link ALL shared schemes.

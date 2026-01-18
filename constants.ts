@@ -8,7 +8,6 @@ export const RAJASTHAN_DISTRICTS = [
   "Sikar", "Sirohi", "Sri Ganganagar", "Tonk", "Udaipur"
 ];
 
-// Districts that fall under Tribal Sub-Plan (TSP) area in Rajasthan
 export const TSP_DISTRICTS = [
   "Banswara", "Dungarpur", "Pratapgarh", "Udaipur", "Sirohi", "Rajsamand", "Chittorgarh", "Pali"
 ];
@@ -20,6 +19,9 @@ export const BENEFICIARY_TYPES = [
   "Senior Citizen", "Disabled", "BPL Family", "Laborer", "Girl Child"
 ];
 
+export const RATION_CARD_TYPES = ["None", "APL", "BPL", "State BPL", "Antyodaya (AAY)"];
+export const PENSION_TYPES = ["None", "Old Age (वृद्धावस्था)", "Widow (विधवा)", "Disability (विकलांग)", "Other"];
+export const PARENT_STATUS = ["Both Alive", "Single Parent", "Orphaned (अनाथ)"];
 export const OCCUPATIONS = ["Farmer", "Laborer", "Small Business", "Private Employee", "Govt Employee", "Student", "Housewife", "Unemployed"];
 export const EDUCATION_LEVELS = ["Illiterate", "Primary", "Middle", "High School", "Graduate", "Post Graduate", "Diploma"];
 export const YES_NO = ["Yes", "No"];

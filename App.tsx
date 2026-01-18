@@ -1,7 +1,21 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { UserProfile, AnalysisResponse, Scheme, AuthState, AIAgentLog } from './types';
-import { RAJASTHAN_DISTRICTS, TSP_DISTRICTS, CATEGORIES, BENEFICIARY_TYPES, GENDER, MARITAL_STATUS, AREA_TYPE, YES_NO } from './constants';
+import { 
+  RAJASTHAN_DISTRICTS, 
+  TSP_DISTRICTS, 
+  CATEGORIES, 
+  BENEFICIARY_TYPES, 
+  GENDER, 
+  MARITAL_STATUS, 
+  AREA_TYPE, 
+  YES_NO, 
+  RATION_CARD_TYPES, 
+  PENSION_TYPES, 
+  PARENT_STATUS,
+  EDUCATION_LEVELS,
+  OCCUPATIONS
+} from './constants';
 import FormSection from './components/FormSection';
 import { analyzeEligibility, fetchMasterSchemes, proposeSystemImprovement } from './services/geminiService';
 import { dbService } from './services/dbService';
@@ -68,7 +82,9 @@ const App: React.FC = () => {
   const [profile, setProfile] = useState<UserProfile>({
     gender: 'Female', age: '30', marital_status: 'Widowed', state: 'Rajasthan', district: 'Udaipur', rural_or_urban: 'Rural', is_tsp_area: 'Yes',
     category: 'ST', beneficiary_type: 'Widow', minority: 'No', disability: 'No', disability_percent: '0', income: '60000', bpl: 'Yes',
-    education: 'Primary', occupation: 'Laborer', labour_card: 'Yes', pregnant: 'No', lactating: 'No', family_count: '4', head_of_family: 'Yes'
+    education: 'Primary', occupation: 'Laborer', labour_card: 'Yes', pregnant: 'No', lactating: 'No', family_count: '4', head_of_family: 'Yes',
+    jan_aadhar_status: 'Yes', ration_card_type: 'BPL', pension_status: 'None', parent_status: 'Both Alive',
+    children_before_2002: '0', children_after_2002: '0', land_owner: 'No', current_class: 'N/A'
   });
 
   const [loading, setLoading] = useState(false);
@@ -84,24 +100,32 @@ const App: React.FC = () => {
 
   const resultRef = useRef<HTMLDivElement>(null);
 
-  // Logical Filtering: Beneficiary Types based on Profile
+  // Logical Filtering: Beneficiary Types based on Gender and Marital Status
   const filteredBeneficiaryTypes = BENEFICIARY_TYPES.filter(type => {
     if (profile.gender === 'Male' && (type === 'Widow' || type === 'Woman' || type === 'Girl Child')) return false;
     if (profile.marital_status !== 'Widowed' && type === 'Widow') return false;
-    if (profile.gender === 'Female' && profile.age && parseInt(profile.age) > 18 && type === 'Girl Child') return false;
     return true;
   });
 
-  // Logical Filtering: Check if selected district is TSP
-  const isSelectedDistrictTSP = TSP_DISTRICTS.includes(profile.district);
+  // Effect to handle Rajasthan TSP Auto-Detection
+  useEffect(() => {
+    if (TSP_DISTRICTS.includes(profile.district)) {
+      setProfile(prev => ({ ...prev, is_tsp_area: 'Yes' }));
+    } else {
+      setProfile(prev => ({ ...prev, is_tsp_area: 'No' }));
+    }
+  }, [profile.district]);
 
+  // Persistent Loading from Database
   useEffect(() => {
     const init = async () => {
       await dbService.init();
       const savedKeys = await dbService.getSetting<typeof apiKeys>('api_keys');
       if (savedKeys) setApiKeys(savedKeys);
+      
       const marks = localStorage.getItem('sarkari_marks');
       if (marks) setBookmarks(JSON.parse(marks));
+      
       const logs = await dbService.getLogs();
       setAiLogs(logs.reverse());
       refreshSchemes();
@@ -109,25 +133,9 @@ const App: React.FC = () => {
     init();
   }, []);
 
-  // Effect to reset beneficiary type if it's no longer valid based on gender/marital status
-  useEffect(() => {
-    if (!filteredBeneficiaryTypes.includes(profile.beneficiary_type)) {
-      setProfile(prev => ({ ...prev, beneficiary_type: filteredBeneficiaryTypes[0] || 'Student' }));
-    }
-  }, [profile.gender, profile.marital_status]);
-
-  // Effect to reset TSP area if district changes to non-TSP
-  useEffect(() => {
-    if (!isSelectedDistrictTSP) {
-      setProfile(prev => ({ ...prev, is_tsp_area: 'No' }));
-    }
-  }, [profile.district]);
-
   const refreshSchemes = async () => {
-    setLoading(true);
     const data = await dbService.getAllSchemes();
     setMasterSchemes(data);
-    setLoading(false);
   };
 
   const handleBookmark = (name: string) => {
@@ -143,7 +151,10 @@ const App: React.FC = () => {
       const res = await analyzeEligibility(profile);
       setResult(res);
       setTimeout(() => resultRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
-    } catch (err: any) { alert("Analysis failed: " + err.message); }
+    } catch (err: any) { 
+      alert(err.message);
+      if (err.message.includes("API Key")) setActiveTab('admin');
+    }
     setLoading(false);
   };
 
@@ -152,14 +163,11 @@ const App: React.FC = () => {
     if (loginForm.email.toLowerCase().trim() === 'yadavnagji@gmail.com' && loginForm.password === '123456') {
       setAuth({ isAuthenticated: true, user: 'Nagji Yadav' });
     } else {
-      alert("Invalid Credentials. Please use yadavnagji@gmail.com / 123456");
+      alert("Invalid Credentials.");
     }
   };
 
   const handleAdminAction = async (agent: string, action: string) => {
-    const activeKey = apiKeys.gemini || process.env.API_KEY;
-    if (!activeKey) return alert("Please set Gemini API Key first.");
-    
     setLoading(true);
     const logId = Math.random().toString(36).substr(2, 9);
     const log: AIAgentLog = {
@@ -183,7 +191,6 @@ const App: React.FC = () => {
         setCurrentProposal(proposal);
         log.diff = proposal;
       }
-      
       log.status = 'applied';
       log.description = `AI Agent ${agent} successfully completed ${action}`;
       await dbService.addLog(log);
@@ -232,30 +239,37 @@ const App: React.FC = () => {
              {!result && !loading && (
                <form onSubmit={handleAnalyze} className="bg-white p-8 rounded-[2.5rem] shadow-2xl border border-slate-50 space-y-10">
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-10">
+                    
                     <FormSection title="व्यक्तिगत प्रोफाइल" icon="👤">
                       <div className="space-y-4">
                         <div className="grid grid-cols-2 gap-4">
                           <label className="block space-y-1">
-                            <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">लिंग</span>
-                            <select value={profile.gender} onChange={e => setProfile({...profile, gender: e.target.value})} className="w-full p-3.5 bg-slate-50 border-0 rounded-2xl font-bold text-xs ring-1 ring-slate-100 focus:ring-2 focus:ring-orange-500">
+                            <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">लिंग (Gender)</span>
+                            <select value={profile.gender} onChange={e => setProfile({...profile, gender: e.target.value})} className="w-full p-3.5 bg-slate-50 border-0 rounded-2xl font-bold text-xs ring-1 ring-slate-100">
                               {GENDER.map(g => <option key={g} value={g}>{g}</option>)}
                             </select>
                           </label>
                           <label className="block space-y-1">
-                            <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">आयु</span>
-                            <input type="number" value={profile.age} onChange={e => setProfile({...profile, age: e.target.value})} className="w-full p-3.5 bg-slate-50 border-0 rounded-2xl font-bold text-xs ring-1 ring-slate-100 focus:ring-2 focus:ring-orange-500" />
+                            <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">आयु (Age)</span>
+                            <input type="number" value={profile.age} onChange={e => setProfile({...profile, age: e.target.value})} className="w-full p-3.5 bg-slate-50 border-0 rounded-2xl font-bold text-xs ring-1 ring-slate-100" />
                           </label>
                         </div>
                         <label className="block space-y-1">
                           <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">शादी की स्थिति</span>
-                          <select value={profile.marital_status} onChange={e => setProfile({...profile, marital_status: e.target.value})} className="w-full p-3.5 bg-slate-50 border-0 rounded-2xl font-bold text-xs ring-1 ring-slate-100 focus:ring-2 focus:ring-orange-500">
+                          <select value={profile.marital_status} onChange={e => setProfile({...profile, marital_status: e.target.value})} className="w-full p-3.5 bg-slate-50 border-0 rounded-2xl font-bold text-xs ring-1 ring-slate-100">
                             {MARITAL_STATUS.map(s => <option key={s} value={s}>{s}</option>)}
                           </select>
                         </label>
                         <label className="block space-y-1">
                           <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">लाभार्थी श्रेणी</span>
-                          <select value={profile.beneficiary_type} onChange={e => setProfile({...profile, beneficiary_type: e.target.value})} className="w-full p-3.5 bg-slate-50 border-0 rounded-2xl font-bold text-xs ring-1 ring-slate-100 focus:ring-2 focus:ring-orange-500">
+                          <select value={profile.beneficiary_type} onChange={e => setProfile({...profile, beneficiary_type: e.target.value})} className="w-full p-3.5 bg-slate-50 border-0 rounded-2xl font-bold text-xs ring-1 ring-slate-100">
                             {filteredBeneficiaryTypes.map(b => <option key={b} value={b}>{b}</option>)}
+                          </select>
+                        </label>
+                        <label className="block space-y-1">
+                          <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">शिक्षा का स्तर</span>
+                          <select value={profile.education} onChange={e => setProfile({...profile, education: e.target.value})} className="w-full p-3.5 bg-slate-50 border-0 rounded-2xl font-bold text-xs ring-1 ring-slate-100">
+                            {EDUCATION_LEVELS.map(l => <option key={l} value={l}>{l}</option>)}
                           </select>
                         </label>
                       </div>
@@ -264,57 +278,123 @@ const App: React.FC = () => {
                     <FormSection title="स्थान एवं क्षेत्र" icon="📍">
                       <div className="space-y-4">
                         <label className="block space-y-1">
-                          <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">जिला (Rajasthan)</span>
-                          <select value={profile.district} onChange={e => setProfile({...profile, district: e.target.value})} className="w-full p-3.5 bg-slate-50 border-0 rounded-2xl font-bold text-xs ring-1 ring-slate-100 focus:ring-2 focus:ring-orange-500">
+                          <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">राज्य</span>
+                          <select value={profile.state} onChange={e => setProfile({...profile, state: e.target.value})} className="w-full p-3.5 bg-slate-50 border-0 rounded-2xl font-bold text-xs ring-1 ring-slate-100">
+                            <option value="Rajasthan">Rajasthan (राजस्थान)</option>
+                          </select>
+                        </label>
+                        <label className="block space-y-1">
+                          <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">जिला (District)</span>
+                          <select value={profile.district} onChange={e => setProfile({...profile, district: e.target.value})} className="w-full p-3.5 bg-slate-50 border-0 rounded-2xl font-bold text-xs ring-1 ring-slate-100">
                             {RAJASTHAN_DISTRICTS.map(d => <option key={d} value={d}>{d}</option>)}
                           </select>
                         </label>
-                        <label className="block space-y-1">
-                          <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">क्षेत्र का प्रकार</span>
-                          <select value={profile.rural_or_urban} onChange={e => setProfile({...profile, rural_or_urban: e.target.value})} className="w-full p-3.5 bg-slate-50 border-0 rounded-2xl font-bold text-xs ring-1 ring-slate-100 focus:ring-2 focus:ring-orange-500">
-                            {AREA_TYPE.map(a => <option key={a} value={a}>{a}</option>)}
-                          </select>
-                        </label>
-                        
-                        {/* Logical: Show TSP question only for specific districts */}
-                        {isSelectedDistrictTSP && (
-                          <label className="block space-y-1 animate-in slide-in-from-top-2">
-                            <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">TSP/Tribal Area</span>
-                            <select value={profile.is_tsp_area} onChange={e => setProfile({...profile, is_tsp_area: e.target.value})} className="w-full p-3.5 bg-slate-50 border-0 rounded-2xl font-bold text-xs ring-1 ring-slate-100 focus:ring-2 focus:ring-orange-500">
-                              {YES_NO.map(y => <option key={y} value={y}>{y}</option>)}
+                        <div className="grid grid-cols-2 gap-4">
+                          <label className="block space-y-1">
+                            <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">क्षेत्र</span>
+                            <select value={profile.rural_or_urban} onChange={e => setProfile({...profile, rural_or_urban: e.target.value})} className="w-full p-3.5 bg-slate-50 border-0 rounded-2xl font-bold text-xs ring-1 ring-slate-100">
+                              {AREA_TYPE.map(a => <option key={a} value={a}>{a}</option>)}
                             </select>
                           </label>
-                        )}
+                          <label className="block space-y-1">
+                            <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">TSP Area?</span>
+                            <select value={profile.is_tsp_area} disabled className="w-full p-3.5 bg-slate-100 border-0 rounded-2xl font-bold text-xs ring-1 ring-slate-100 opacity-70">
+                              <option value={profile.is_tsp_area}>{profile.is_tsp_area}</option>
+                            </select>
+                          </label>
+                        </div>
+                        <label className="flex items-center gap-2 p-3.5 bg-slate-50 rounded-2xl border border-slate-100 cursor-pointer">
+                          <input type="checkbox" checked={profile.jan_aadhar_status === 'Yes'} onChange={e => setProfile({...profile, jan_aadhar_status: e.target.checked ? 'Yes' : 'No'})} className="rounded text-orange-600" />
+                          <span className="text-[10px] font-black text-slate-500 uppercase">जन-आधार कार्ड है?</span>
+                        </label>
                       </div>
                     </FormSection>
 
-                    <FormSection title="आर्थिक पृष्ठभूमि" icon="📊">
+                    <FormSection title="आर्थिक एवं सामाजिक" icon="📊">
                       <div className="space-y-4">
                         <label className="block space-y-1">
                           <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">वर्ग (Category)</span>
-                          <select value={profile.category} onChange={e => setProfile({...profile, category: e.target.value})} className="w-full p-3.5 bg-slate-50 border-0 rounded-2xl font-bold text-xs ring-1 ring-slate-100 focus:ring-2 focus:ring-orange-500">
+                          <select value={profile.category} onChange={e => setProfile({...profile, category: e.target.value})} className="w-full p-3.5 bg-slate-50 border-0 rounded-2xl font-bold text-xs ring-1 ring-slate-100">
                             {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
                           </select>
                         </label>
                         <label className="block space-y-1">
-                          <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">वार्षिक आय</span>
-                          <input type="number" value={profile.income} onChange={e => setProfile({...profile, income: e.target.value})} className="w-full p-3.5 bg-slate-50 border-0 rounded-2xl font-bold text-xs ring-1 ring-slate-100 focus:ring-2 focus:ring-orange-500" />
+                          <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">राशन कार्ड का प्रकार</span>
+                          <select value={profile.ration_card_type} onChange={e => setProfile({...profile, ration_card_type: e.target.value})} className="w-full p-3.5 bg-slate-50 border-0 rounded-2xl font-bold text-xs ring-1 ring-slate-100">
+                            {RATION_CARD_TYPES.map(r => <option key={r} value={r}>{r}</option>)}
+                          </select>
                         </label>
-                        <div className="flex flex-col gap-2">
-                          <label className="flex items-center gap-2 p-3 bg-slate-50 rounded-xl border border-slate-100 cursor-pointer">
-                            <input type="checkbox" checked={profile.bpl === 'Yes'} onChange={e => setProfile({...profile, bpl: e.target.checked ? 'Yes' : 'No'})} className="rounded text-orange-600" />
-                            <span className="text-[10px] font-black text-slate-500 uppercase">BPL कार्ड?</span>
-                          </label>
-                          <label className="flex items-center gap-2 p-3 bg-slate-50 rounded-xl border border-slate-100 cursor-pointer">
-                            <input type="checkbox" checked={profile.labour_card === 'Yes'} onChange={e => setProfile({...profile, labour_card: e.target.checked ? 'Yes' : 'No'})} className="rounded text-orange-600" />
-                            <span className="text-[10px] font-black text-slate-500 uppercase">श्रम कार्ड?</span>
-                          </label>
-                        </div>
+                        <label className="block space-y-1">
+                          <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">वार्षिक आय (Annual Income)</span>
+                          <input type="number" value={profile.income} onChange={e => setProfile({...profile, income: e.target.value})} className="w-full p-3.5 bg-slate-50 border-0 rounded-2xl font-bold text-xs ring-1 ring-slate-100" />
+                        </label>
+                        <label className="block space-y-1">
+                          <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">मिल रही पेंशन</span>
+                          <select value={profile.pension_status} onChange={e => setProfile({...profile, pension_status: e.target.value})} className="w-full p-3.5 bg-slate-50 border-0 rounded-2xl font-bold text-xs ring-1 ring-slate-100">
+                            {PENSION_TYPES.map(p => <option key={p} value={p}>{p}</option>)}
+                          </select>
+                        </label>
                       </div>
                     </FormSection>
+
+                    {/* Conditional Logic: Student Details */}
+                    {profile.beneficiary_type === 'Student' && (
+                      <FormSection title="विद्यार्थी विवरण" icon="🎓">
+                         <div className="space-y-4 animate-in slide-in-from-top-4">
+                            <label className="block space-y-1">
+                              <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">माता-पिता की स्थिति</span>
+                              <select value={profile.parent_status} onChange={e => setProfile({...profile, parent_status: e.target.value})} className="w-full p-3.5 bg-slate-50 border-0 rounded-2xl font-bold text-xs ring-1 ring-slate-100">
+                                {PARENT_STATUS.map(p => <option key={p} value={p}>{p}</option>)}
+                              </select>
+                            </label>
+                            <label className="block space-y-1">
+                              <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">वर्तमान कक्षा/कोर्स</span>
+                              <input type="text" value={profile.current_class} onChange={e => setProfile({...profile, current_class: e.target.value})} className="w-full p-3.5 bg-slate-50 border-0 rounded-2xl font-bold text-xs ring-1 ring-slate-100" placeholder="e.g. 10th, B.A." />
+                            </label>
+                         </div>
+                      </FormSection>
+                    )}
+
+                    {/* Conditional Logic: Farmer Details */}
+                    {profile.beneficiary_type === 'Farmer' && (
+                      <FormSection title="किसान विवरण" icon="🚜">
+                         <div className="space-y-4 animate-in slide-in-from-top-4">
+                            <label className="block space-y-1">
+                              <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">स्वयं की कृषि भूमि है?</span>
+                              <select value={profile.land_owner} onChange={e => setProfile({...profile, land_owner: e.target.value})} className="w-full p-3.5 bg-slate-50 border-0 rounded-2xl font-bold text-xs ring-1 ring-slate-100">
+                                {YES_NO.map(y => <option key={y} value={y}>{y}</option>)}
+                              </select>
+                            </label>
+                         </div>
+                      </FormSection>
+                    )}
+
+                    {/* Logical Family Counts */}
+                    <FormSection title="परिवार एवं बच्चे" icon="👨‍👩‍👧‍👦">
+                       <div className="space-y-4">
+                          <div className="grid grid-cols-2 gap-4">
+                             <label className="block space-y-1">
+                               <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest leading-tight">बच्चे (2002 से पहले)</span>
+                               <input type="number" value={profile.children_before_2002} onChange={e => setProfile({...profile, children_before_2002: e.target.value})} className="w-full p-3.5 bg-slate-50 border-0 rounded-2xl font-bold text-xs ring-1 ring-slate-100" />
+                             </label>
+                             <label className="block space-y-1">
+                               <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest leading-tight">बच्चे (2002 के बाद)</span>
+                               <input type="number" value={profile.children_after_2002} onChange={e => setProfile({...profile, children_after_2002: e.target.value})} className="w-full p-3.5 bg-slate-50 border-0 rounded-2xl font-bold text-xs ring-1 ring-slate-100" />
+                             </label>
+                          </div>
+                          <div className="flex flex-col gap-2 pt-2">
+                             <label className="flex items-center gap-2 p-3 bg-slate-50 rounded-xl border border-slate-100 cursor-pointer">
+                               <input type="checkbox" checked={profile.labour_card === 'Yes'} onChange={e => setProfile({...profile, labour_card: e.target.checked ? 'Yes' : 'No'})} className="rounded text-orange-600" />
+                               <span className="text-[10px] font-black text-slate-500 uppercase tracking-tighter">श्रम कार्ड (Labour Card) है?</span>
+                             </label>
+                          </div>
+                       </div>
+                    </FormSection>
+
                   </div>
+                  
                   <button type="submit" disabled={loading} className="w-full py-5 bg-orange-600 text-white font-black rounded-3xl shadow-2xl hover:bg-orange-700 transition-all uppercase tracking-[0.2em] text-sm disabled:opacity-50">
-                    पात्र योजनाएं खोजें 🔍
+                    {loading ? 'AI द्वारा विश्लेषण जारी है...' : 'पात्र योजनाएं खोजें 🔍'}
                   </button>
                </form>
              )}
@@ -359,15 +439,11 @@ const App: React.FC = () => {
               </div>
               <button onClick={refreshSchemes} className="px-6 py-4 bg-orange-600 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-orange-700 transition-all">Refresh List 🔄</button>
             </div>
-            {loading ? (
-              <div className="py-20 text-center text-slate-300 font-black">लोड हो रहा है...</div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {masterSchemes.filter(s => s.yojana_name.toLowerCase().includes(searchTerm.toLowerCase())).map((s, idx) => (
-                  <SchemeCard key={idx} scheme={s} isBookmarked={bookmarks.includes(s.yojana_name)} onToggle={() => handleBookmark(s.yojana_name)} />
-                ))}
-              </div>
-            )}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {masterSchemes.filter(s => s.yojana_name.toLowerCase().includes(searchTerm.toLowerCase())).map((s, idx) => (
+                <SchemeCard key={idx} scheme={s} isBookmarked={bookmarks.includes(s.yojana_name)} onToggle={() => handleBookmark(s.yojana_name)} />
+              ))}
+            </div>
           </div>
         )}
 
@@ -511,7 +587,7 @@ const App: React.FC = () => {
       </main>
 
       <footer className="py-20 text-center opacity-40">
-        <p className="text-[10px] font-black uppercase tracking-[0.4em] text-slate-400">Sarkari Yojana AI Ecosystem Pro v3.2</p>
+        <p className="text-[10px] font-black uppercase tracking-[0.4em] text-slate-400">Sarkari Yojana AI Ecosystem Pro v3.5</p>
       </footer>
     </div>
   );
