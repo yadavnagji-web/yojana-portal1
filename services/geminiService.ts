@@ -33,15 +33,18 @@ export async function testApiConnection(provider: 'gemini' | 'groq', key: string
   try {
     if (provider === 'gemini') {
       const ai = new GoogleGenAI({ apiKey: key });
-      const res = await ai.models.generateContent({
+      const response = await ai.models.generateContent({
         model: 'gemini-3-flash-preview',
-        contents: 'hi',
+        contents: 'test',
       });
-      return !!res.text;
+      return !!response.text;
     } else {
       const resp = await fetch("https://api.groq.com/openai/v1/chat/completions", {
         method: "POST",
-        headers: { "Authorization": `Bearer ${key}`, "Content-Type": "application/json" },
+        headers: { 
+          "Authorization": `Bearer ${key}`, 
+          "Content-Type": "application/json" 
+        },
         body: JSON.stringify({
           model: "llama-3.3-70b-versatile",
           messages: [{ role: "user", content: "hi" }],
@@ -51,6 +54,7 @@ export async function testApiConnection(provider: 'gemini' | 'groq', key: string
       return resp.ok;
     }
   } catch (e) {
+    console.error(`Connection test failed for ${provider}:`, e);
     return false;
   }
 }
@@ -94,15 +98,14 @@ export async function analyzeEligibility(profile: UserProfile, isDummy: boolean)
   const geminiKey = savedKeys?.gemini || process.env.API_KEY;
   const groqKey = savedKeys?.groq;
 
-  if (!geminiKey) throw new Error("Gemini API Key missing. It is required for live search.");
+  if (!geminiKey) throw new Error("Gemini API Key missing. Please check Admin settings.");
 
   const ai = new GoogleGenAI({ apiKey: geminiKey });
-  const searchPrompt = `LIVE SEARCH: For this user profile ${JSON.stringify(profile)}, search official rajasthan.gov.in and india.gov.in sites for active 2024-2025 schemes. 
-Return schemes as JSON including detailed application roadmap (signatures like Patwari/Tehsildar and submission points).`;
+  const searchPrompt = `Search official Rajasthan and Indian Govt sites (2024-2025) for active welfare schemes for this profile: ${JSON.stringify(profile)}.
+Return results as JSON with a step-by-step roadmap including needed signatures (Patwari, etc.) and where to submit.`;
 
   try {
-    // Stage 1: Gemini Live Search
-    const geminiRes = await ai.models.generateContent({
+    const response = await ai.models.generateContent({
       model: 'gemini-3-pro-preview',
       contents: searchPrompt,
       config: { 
@@ -111,40 +114,39 @@ Return schemes as JSON including detailed application roadmap (signatures like P
       }
     });
 
-    const geminiRaw = geminiRes.text || "";
-    const sources = geminiRes.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
+    const geminiRaw = response.text || "";
+    const sources = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
     let data = robustJsonParse(geminiRaw);
     let list: Scheme[] = data?.eligible_schemes || (Array.isArray(data) ? data : []);
 
     let verificationContent = "";
 
-    // Stage 2: Groq Verification (Optional if key provided)
     if (groqKey && list.length > 0) {
       try {
-        const verifyPrompt = `Verify the eligibility of these schemes for this user profile. 
-User: ${JSON.stringify(profile)}
+        const verifyPrompt = `Verify these schemes for this user:
+Profile: ${JSON.stringify(profile)}
 Schemes: ${JSON.stringify(list)}
-Return a summary in Hindi confirming if the AI matches are accurate based on current rules.`;
+Provide a short Hindi audit confirming eligibility.`;
         
         const groqResp = await fetch("https://api.groq.com/openai/v1/chat/completions", {
           method: "POST",
           headers: { "Authorization": `Bearer ${groqKey}`, "Content-Type": "application/json" },
           body: JSON.stringify({
             model: "llama-3.3-70b-versatile",
-            messages: [{ role: "system", content: "You are a policy auditor." }, { role: "user", content: verifyPrompt }],
+            messages: [{ role: "user", content: verifyPrompt }],
             temperature: 0.1
           })
         });
         const groqData = await groqResp.json();
         verificationContent = groqData.choices?.[0]?.message?.content || "";
       } catch (ge) {
-        console.warn("Groq verification skipped due to error", ge);
+        console.warn("Groq audit failed, skipping...", ge);
       }
     }
 
-    const response: AnalysisResponse = {
+    const finalResponse: AnalysisResponse = {
       hindiContent: geminiRaw.split(/---JSON_START---|```json|\[/)[0].trim() + 
-                    (verificationContent ? `\n\n--- DUAL AI VERIFICATION ---\n${verificationContent}` : ""),
+                    (verificationContent ? `\n\n--- DUAL AI AUDIT ---\n${verificationContent}` : ""),
       eligible_schemes: list.map(s => ({
         ...s,
         government: s.government || (profile.state === 'Rajasthan' ? 'Rajasthan Govt' : 'Central Govt'),
@@ -155,12 +157,12 @@ Return a summary in Hindi confirming if the AI matches are accurate based on cur
     };
 
     if (!isDummy && list.length > 0) {
-      await dbService.saveCache(profileHash, response);
+      await dbService.saveCache(profileHash, finalResponse);
       await dbService.saveUserSubmission(profile);
     }
-    return response;
+    return finalResponse;
   } catch (e: any) {
-    console.error("API Error", e);
-    throw new Error(`खोज विफल: ${e.message}`);
+    console.error("Critical API Error:", e);
+    throw new Error(`API Error: ${e.message || "Unknown error occurred"}`);
   }
 }
