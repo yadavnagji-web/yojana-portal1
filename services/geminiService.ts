@@ -3,21 +3,27 @@ import { GoogleGenAI } from "@google/genai";
 import { UserProfile, AnalysisResponse, Scheme } from "../types";
 import { dbService } from "./dbService";
 
-const SYSTEM_INSTRUCTION = `आप भारत सरकार और राजस्थान सरकार की योजनाओं के विशेषज्ञ विश्लेषक हैं। 
-आपका कार्य उपयोगकर्ता की प्रोफाइल के आधार पर कम से कम 10 से 15 ऐसी योजनाएं खोजना है जिनमें उपयोगकर्ता के लाभ की संभावना हो।
+const SYSTEM_INSTRUCTION = `आप भारत सरकार और राजस्थान सरकार के सर्वश्रेष्ठ नीति विश्लेषक हैं। 
+आपका कार्य उपयोगकर्ता के प्रोफाइल के आधार पर कम से कम 15 से 20 कल्याणकारी योजनाओं की पहचान करना है।
 
-नियम:
-1. अधिकतम परिणाम: यदि उपयोगकर्ता पूरी तरह फिट नहीं भी है, तो भी 'CONDITIONAL' श्रेणी में योजना दिखाएं। 
-2. 'अपात्र' (NOT_ELIGIBLE) परिणाम न दिखाएं: केवल वे योजनाएं दिखाएं जहां उपयोगकर्ता 'ELIGIBLE' या 'CONDITIONAL' (यदि वे कुछ दस्तावेज जमा करें) हो।
-3. खोज का दायरा: सामाजिक सुरक्षा, पेंशन, छात्रवृत्ति, स्वास्थ्य (चिरंजीवी/आयुष्मान), किसान सहायता, और महिला सशक्तिकरण की योजनाओं पर ध्यान दें।
-4. भाषा: सभी जानकारी शुद्ध हिंदी (Devanagari) में होनी चाहिए।
-5. डेटा स्रोत: केवल 2024-2025 और आगामी 2026 की सक्रिय योजनाओं का उपयोग करें।
+प्रमुख निर्देश:
+1. व्यापक पात्रता: यदि उपयोगकर्ता किसी योजना के लिए 70% भी फिट बैठता है, तो उसे 'CONDITIONAL' (शर्तों के साथ पात्र) दिखाएं। 'अपात्र' (NOT_ELIGIBLE) परिणाम तब तक न दिखाएं जब तक कि वह बिल्कुल ही असंभव न हो।
+2. स्रोत: मुख्य रूप से https://www.myscheme.gov.in/hi/search/state/Rajasthan और राजस्थान सरकार के आधिकारिक पोर्टल्स का उपयोग करें।
+3. परिणाम की संख्या: 15-20 सक्रिय योजनाओं का लक्ष्य रखें। इसमें स्वास्थ्य, शिक्षा, पेंशन, कृषि, महिला कल्याण, और स्वरोजगार की योजनाएं शामिल होनी चाहिए।
+4. भाषा: संपूर्ण आउटपुट हिंदी (Devanagari) में होना चाहिए।
+5. डेटा शुद्धता: सुनिश्चित करें कि JSON प्रारूप बिल्कुल सही हो और ---JSON_START--- और ---JSON_END--- के बीच हो।
 
-JSON संरचना:
-प्रत्येक योजना के लिए निम्नलिखित फ़ील्ड अनिवार्य हैं:
-- yojana_name, government, detailed_benefits, eligibility_status (ELIGIBLE या CONDITIONAL), eligibility_reason_hindi, required_documents (array), application_type, signatures_required (array), submission_point, official_pdf_link.
-
-आउटपुट को ---JSON_START--- और ---JSON_END--- के बीच रखें।`;
+अनिवार्य फ़ील्ड (JSON):
+- yojana_name: योजना का नाम
+- government: 'Rajasthan Govt' या 'Central Govt'
+- detailed_benefits: लाभों का विस्तृत विवरण
+- eligibility_status: 'ELIGIBLE' या 'CONDITIONAL'
+- eligibility_reason_hindi: पात्र होने का ठोस कारण
+- required_documents: दस्तावेजों की सूची (Array)
+- signatures_required: आवश्यक हस्ताक्षर (Array)
+- application_type: 'Online', 'Offline' या 'Both'
+- submission_point: जमा करने का स्थान
+- official_pdf_link: आधिकारिक लिंक या पोर्टल URL`;
 
 export async function testApiConnection(provider: 'gemini' | 'groq', key: string): Promise<boolean> {
   if (!key) return false;
@@ -62,9 +68,10 @@ function robustJsonParse(text: string): any {
 
 async function analyzeWithGemini(profile: UserProfile, key: string): Promise<AnalysisResponse> {
   const ai = new GoogleGenAI({ apiKey: key });
-  const prompt = `उपयोगकर्ता प्रोफाइल के लिए कम से कम 10 सरकारी योजनाओं की खोज करें: ${JSON.stringify(profile)}. 
-  विशेष रूप से राजस्थान और केंद्र सरकार की ऐसी योजनाएं खोजें जिनमें उपयोगकर्ता 'पात्र' (Eligible) हो सकता है। 
-  यदि उपयोगकर्ता सीधे पात्र नहीं है, तो 'शर्तों के साथ पात्र' (Conditional) श्रेणी में रखें और कारण बताएं। 'अपात्र' (Not Eligible) न दिखाएं।`;
+  const prompt = `प्रोफ़ाइल: ${JSON.stringify(profile)}.
+  संदर्भ लिंक: https://www.myscheme.gov.in/hi/search/state/Rajasthan
+  कार्य: उपयोगकर्ता के लिए कम से कम 15-20 राजस्थान और केंद्र सरकार की योजनाओं की सूची बनाएं।
+  पात्रता को 'पात्र' या 'शर्तों के साथ पात्र' रखें। अधिक से अधिक योजनाएं खोजें।`;
 
   const res = await ai.models.generateContent({
     model: 'gemini-3-pro-preview',
@@ -81,14 +88,14 @@ async function analyzeWithGemini(profile: UserProfile, key: string): Promise<Ana
   const schemes = data?.eligible_schemes || (Array.isArray(data) ? data : []);
 
   return {
-    hindiContent: raw.split(/---JSON_START---|```json|\[/)[0].trim() || "यहाँ आपके लिए खोजी गई प्रमुख योजनाएं हैं:",
+    hindiContent: raw.split(/---JSON_START---|```json|\[/)[0].trim() || "खोज पूरी हुई। यहाँ विस्तृत विवरण है:",
     eligible_schemes: schemes,
     groundingSources: res.candidates?.[0]?.groundingMetadata?.groundingChunks || []
   };
 }
 
 async function analyzeWithGroq(profile: UserProfile, key: string): Promise<AnalysisResponse> {
-  const prompt = `${SYSTEM_INSTRUCTION}\n\nUSER PROFILE: ${JSON.stringify(profile)}\n\nप्रोफाइल के आधार पर 10 सर्वश्रेष्ठ 'पात्र' योजनाओं की सूची JSON में दें।`;
+  const prompt = `${SYSTEM_INSTRUCTION}\n\nUSER PROFILE: ${JSON.stringify(profile)}\n\nप्रोफाइल के आधार पर 15 सर्वश्रेष्ठ 'पात्र' योजनाओं की सूची JSON में दें। https://www.myscheme.gov.in/hi/search/state/Rajasthan का संदर्भ लें।`;
   const resp = await fetch("https://api.groq.com/openai/v1/chat/completions", {
     method: "POST",
     headers: { "Authorization": `Bearer ${key}`, "Content-Type": "application/json" },
