@@ -3,19 +3,30 @@ import { GoogleGenAI } from "@google/genai";
 import { UserProfile, AnalysisResponse, Scheme } from "../types";
 import { dbService } from "./dbService";
 
-const SYSTEM_INSTRUCTION = `You are an Expert Government Policy Analyst for Rajasthan and India. 
-Your task is to provide REAL schemes for the 2024-2026 cycle.
+const SYSTEM_INSTRUCTION = `You are an Expert Government Policy Analyst specializing in Live Search.
+Your task is to identify ELIGIBLE welfare schemes for a user by searching OFFICIAL GOVERNMENT WEBSITES ONLY.
+
+SOURCES: 
+- Rajasthan Government (e.g., rajasthan.gov.in, sso.rajasthan.gov.in, dipr.rajasthan.gov.in)
+- Government of India (e.g., india.gov.in, myscheme.gov.in, pib.gov.in)
 
 STRICT RULES:
-1. NEVER use the word "अज्ञात" or "Unknown". Only use real scheme names.
-2. RAJASTHAN REAL SCHEMES: Mukhyamantri Ayushman Arogya Yojana, Lado Protsahan Yojana, Rajasthan Annapurna Rasoi, Mukhyamantri Nishulk Dawa Yojana, Jan-Aadhar Scheme, Mukhyamantri Yuva Sambal Yojana, Rajasthan Scholarship Schemes (Post-Matric), Kalibai Bheel Medhavi Chatra Scooty Yojana.
-3. CENTRAL REAL SCHEMES: PM-Kisan Samman Nidhi, Ayushman Bharat (PM-JAY), PM Awas Yojana, PM Ujjwala Yojana, Sukanya Samriddhi Yojana, Atal Pension Yojana, PM Vishwakarma Yojana, PM Matru Vandana Yojana.
-4. If the user is a woman, show women-centric schemes. If a farmer, show agricultural schemes. If a student, show scholarship schemes.
-5. NO EMPTY RESULTS: Always provide at least 5-7 REAL schemes. If not 100% eligible, set status to "CONDITIONAL" and explain which document is needed.
-6. JSON: Always return a JSON object with the key "eligible_schemes".
-7. ROADMAP: Include 'Patwari', 'Sarpanch', 'Gram Sevak' or 'Tehsildar' in signatures_required where applicable.
+1. NO PRE-FED DATA: Do not use any hardcoded lists. Use the 'googleSearch' tool for every query to find 2024-2025 and 2026 active schemes.
+2. ACCURACY: Only return schemes where the user profile realistically matches the criteria.
+3. LANGUAGE: All output text (names, descriptions, reasons) MUST be in Hindi (Devanagari).
+4. MANDATORY FIELDS: Every scheme must include:
+   - yojana_name (Real name in Hindi)
+   - government (Rajasthan Govt or Central Govt)
+   - detailed_benefits (Specific financial or social benefits)
+   - eligibility_reason_hindi (Why this specific user is eligible)
+   - required_documents (List of actual docs needed)
+   - form_source (URL or specific portal name like e-Mitra)
+   - application_type (Online/Offline)
+   - signatures_required (e.g., Patwari, Sarpanch)
+   - submission_point (Where to submit)
+   - official_pdf_link (Direct link to the portal or guideline)
 
-Wrap the JSON between ---JSON_START--- and ---JSON_END---.`;
+5. JSON FORMAT: Return the final list as a JSON object with the key "eligible_schemes" wrapped between ---JSON_START--- and ---JSON_END---.`;
 
 async function hashProfile(profile: UserProfile): Promise<string> {
   const msgUint8 = new TextEncoder().encode(JSON.stringify(profile));
@@ -54,87 +65,53 @@ export async function analyzeEligibility(profile: UserProfile, isDummy: boolean)
 
   const savedKeys = await dbService.getSetting<any>('api_keys');
   const geminiKey = savedKeys?.gemini || process.env.API_KEY;
-  const groqKey = savedKeys?.groq;
 
-  const prompt = `Analyze profile for 2024-2026 Rajasthan & Central Schemes: ${JSON.stringify(profile)}. 
-Identify real benefits. Focus on Rajasthan residents. Ensure no 'Unknown' labels. 
-Provide signatures (Patwari/Sarpanch) and where to submit (e-Mitra/Gram Panchayat).`;
+  // We strictly use gemini-3-pro-preview for Google Search capabilities
+  if (!geminiKey) throw new Error("Gemini API Key missing in Admin settings.");
 
-  let rawResult = "";
-  let sources: any[] = [];
+  const ai = new GoogleGenAI({ apiKey: geminiKey });
+  const prompt = `SEARCH AND ANALYZE: For this user profile ${JSON.stringify(profile)}, find the latest (2024-2025) schemes from Rajasthan Govt and Central Govt.
+Use Google Search to verify current eligibility rules on .gov.in websites.
+Focus on: ${profile.gender === 'Female' ? 'Women empowerment,' : ''} ${profile.is_farmer === 'Yes' ? 'Agricultural subsidies,' : ''} ${profile.age < 25 ? 'Scholarships,' : ''} Social Security.
+Identify the exact roadmap: Which signatures (Patwari/Sarpanch) are needed? Where to apply (e-Mitra or portal)?`;
 
-  // Try Groq First
-  if (groqKey && groqKey.trim().startsWith('gsk_')) {
-    try {
-      const resp = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-        method: "POST",
-        headers: { "Authorization": `Bearer ${groqKey}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: "llama-3.3-70b-versatile",
-          messages: [{ role: "system", content: SYSTEM_INSTRUCTION }, { role: "user", content: prompt }],
-          temperature: 0.1
-        })
-      });
-      const data = await resp.json();
-      rawResult = data.choices?.[0]?.message?.content || "";
-    } catch (e) { console.warn("Groq error"); }
-  }
-
-  // Fallback to Gemini
-  if (!rawResult && geminiKey) {
-    try {
-      const ai = new GoogleGenAI({ apiKey: geminiKey });
-      const res = await ai.models.generateContent({
-        model: 'gemini-3-pro-preview',
-        contents: prompt,
-        config: { systemInstruction: SYSTEM_INSTRUCTION, tools: [{ googleSearch: {} }] }
-      });
-      rawResult = res.text || "";
-      sources = res.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
-    } catch (e) { console.error("Gemini error"); }
-  }
-
-  if (!rawResult) throw new Error("डेटा प्राप्त नहीं हुआ। कृपया इंटरनेट या API Key जांचें।");
-
-  const data = robustJsonParse(rawResult);
-  let list = data?.eligible_schemes || (Array.isArray(data) ? data : []);
-
-  // Guarantee Real Data
-  list = list.map((s: any) => ({
-    ...s,
-    government: s.government || 'Rajasthan Govt',
-    eligibility_status: s.eligibility_status || 'ELIGIBLE',
-    yojana_name: s.yojana_name || 'मुख्यमंत्री आयुष्मान आरोग्य योजना', // Robust fallback to a real scheme
-    signatures_required: Array.isArray(s.signatures_required) ? s.signatures_required : ["आवेदक", "पटवारी"]
-  }));
-
-  const response: AnalysisResponse = {
-    hindiContent: rawResult.split(/---JSON_START---|```json|\[/)[0].trim(),
-    eligible_schemes: list,
-    groundingSources: sources,
-    timestamp: Date.now()
-  };
-
-  if (!isDummy && list.length > 0) {
-    await dbService.saveCache(profileHash, response);
-    await dbService.saveUserSubmission(profile);
-  }
-  return response;
-}
-
-export async function fetchMasterSchemes(category: string) {
-  const savedKeys = await dbService.getSetting<any>('api_keys');
-  const key = savedKeys?.gemini || process.env.API_KEY;
-  if (!key) return;
   try {
-    const ai = new GoogleGenAI({ apiKey: key });
     const res = await ai.models.generateContent({
       model: 'gemini-3-pro-preview',
-      contents: `Search 10 REAL ${category} schemes for 2024-2026. No placeholders.`,
-      config: { tools: [{ googleSearch: {} }] }
+      contents: prompt,
+      config: { 
+        systemInstruction: SYSTEM_INSTRUCTION, 
+        tools: [{ googleSearch: {} }] 
+      }
     });
-    const data = robustJsonParse(res.text || "");
-    const list = data?.eligible_schemes || (Array.isArray(data) ? data : []);
-    for (const s of list) { if (s.yojana_name) await dbService.upsertScheme(s); }
-  } catch (e) { console.error("Sync error"); }
+
+    const rawResult = res.text || "";
+    const sources = res.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
+    const data = robustJsonParse(rawResult);
+    let list = data?.eligible_schemes || (Array.isArray(data) ? data : []);
+
+    // Sanitize
+    list = list.map((s: any) => ({
+      ...s,
+      government: s.government || (profile.state === 'Rajasthan' ? 'Rajasthan Govt' : 'Central Govt'),
+      eligibility_status: s.eligibility_status || 'ELIGIBLE',
+      signatures_required: Array.isArray(s.signatures_required) ? s.signatures_required : ["आवेदक"]
+    }));
+
+    const response: AnalysisResponse = {
+      hindiContent: rawResult.split(/---JSON_START---|```json|\[/)[0].trim(),
+      eligible_schemes: list,
+      groundingSources: sources,
+      timestamp: Date.now()
+    };
+
+    if (!isDummy && list.length > 0) {
+      await dbService.saveCache(profileHash, response);
+      await dbService.saveUserSubmission(profile);
+    }
+    return response;
+  } catch (e: any) {
+    console.error("Search failed", e);
+    throw new Error(`लाइव सर्च विफल: ${e.message}`);
+  }
 }

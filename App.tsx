@@ -7,109 +7,117 @@ import {
   RURAL_URBAN, EDUCATION_LEVELS, INSTITUTION_TYPES, PENSION_STATUS
 } from './constants';
 import FormSection from './components/FormSection';
-import { analyzeEligibility, fetchMasterSchemes } from './services/geminiService';
+import { analyzeEligibility } from './services/geminiService';
 import { dbService } from './services/dbService';
 
 const StatusBadge: React.FC<{ status: EligibilityStatus }> = ({ status }) => {
   const config = {
-    ELIGIBLE: { bg: 'bg-green-100', text: 'text-green-700', label: '✅ आप पात्र हैं' },
+    ELIGIBLE: { bg: 'bg-green-100', text: 'text-green-700', label: '✅ पात्र' },
     NOT_ELIGIBLE: { bg: 'bg-red-100', text: 'text-red-700', label: '❌ अपात्र' },
-    CONDITIONAL: { bg: 'bg-amber-100', text: 'text-amber-700', label: '⚠️ दस्तावेज़ जमा करें' }
+    CONDITIONAL: { bg: 'bg-amber-100', text: 'text-amber-700', label: '⚠️ दस्तावेज़ आधारित' }
   };
   const { bg, text, label } = config[status || 'NOT_ELIGIBLE'];
-  return <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase ${bg} ${text}`}>{label}</span>;
+  return <span className={`px-2 py-0.5 rounded-md text-[9px] font-black uppercase ${bg} ${text}`}>{label}</span>;
 };
 
-const SchemeCard: React.FC<{ scheme: Scheme }> = ({ scheme }) => {
-  const [isOpen, setIsOpen] = useState(false);
+const SchemesTable: React.FC<{ schemes: Scheme[] }> = ({ schemes }) => {
+  const [expandedId, setExpandedId] = useState<number | null>(null);
 
   return (
-    <div className={`bg-white rounded-[2.5rem] border transition-all duration-300 overflow-hidden ${isOpen ? 'border-orange-500 shadow-2xl scale-[1.01]' : 'border-slate-100 shadow-sm hover:shadow-md'}`}>
-      <div className="p-6 flex items-start justify-between cursor-pointer" onClick={() => setIsOpen(!isOpen)}>
-        <div className="flex-1">
-          <div className="flex items-center gap-2 mb-3">
-            <span className={`px-2 py-0.5 rounded-md text-[8px] font-black uppercase tracking-wider ${scheme.government?.includes('Rajasthan') ? 'bg-orange-600 text-white' : 'bg-blue-600 text-white'}`}>{scheme.government}</span>
-            <StatusBadge status={scheme.eligibility_status!} />
-          </div>
-          <h3 className="text-xl font-black text-slate-800 leading-tight mb-2">{scheme.yojana_name}</h3>
-          <p className="text-xs text-slate-500 font-bold line-clamp-1">{scheme.short_purpose_hindi}</p>
-        </div>
-        <div className={`w-10 h-10 rounded-full bg-slate-50 flex items-center justify-center transition-transform duration-500 ${isOpen ? 'rotate-180 bg-orange-50' : ''}`}>
-          <span className={`text-xs ${isOpen ? 'text-orange-500' : 'text-slate-400'}`}>▼</span>
-        </div>
-      </div>
-      
-      {isOpen && (
-        <div className="px-6 pb-8 pt-2 space-y-8 border-t border-slate-50 animate-slide-up">
-          <section className="bg-orange-50/50 p-5 rounded-[2rem] border border-orange-100/50">
-            <h4 className="text-[10px] font-black text-orange-600 uppercase tracking-widest mb-2">पात्रता विवरण:</h4>
-            <p className="text-xs text-slate-700 font-bold leading-relaxed">{scheme.eligibility_reason_hindi}</p>
-          </section>
+    <div className="overflow-x-auto bg-white rounded-3xl border border-slate-100 shadow-xl">
+      <table className="w-full text-left border-collapse min-w-[800px]">
+        <thead>
+          <tr className="bg-slate-50 border-b border-slate-100">
+            <th className="p-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">योजना का नाम और सरकार</th>
+            <th className="p-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">मुख्य लाभ</th>
+            <th className="p-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">पात्रता स्थिति</th>
+            <th className="p-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">कार्य (Action)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {schemes.map((scheme, idx) => (
+            <React.Fragment key={idx}>
+              <tr className={`border-b border-slate-50 hover:bg-slate-50/50 transition-colors cursor-pointer ${expandedId === idx ? 'bg-orange-50/30' : ''}`} onClick={() => setExpandedId(expandedId === idx ? null : idx)}>
+                <td className="p-5">
+                  <div className="flex flex-col gap-1">
+                    <span className="text-sm font-black text-slate-800">{scheme.yojana_name}</span>
+                    <span className={`text-[9px] font-bold uppercase w-fit px-1.5 py-0.5 rounded ${scheme.government?.includes('Rajasthan') ? 'bg-orange-100 text-orange-700' : 'bg-blue-100 text-blue-700'}`}>
+                      {scheme.government}
+                    </span>
+                  </div>
+                </td>
+                <td className="p-5">
+                  <p className="text-xs text-slate-600 font-bold line-clamp-2 max-w-xs">{scheme.detailed_benefits}</p>
+                </td>
+                <td className="p-5">
+                  <StatusBadge status={scheme.eligibility_status!} />
+                </td>
+                <td className="p-5 text-center">
+                  <button className="px-4 py-2 bg-slate-900 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-orange-600 transition-all shadow-sm">
+                    {expandedId === idx ? 'बंद करें' : 'विवरण देखें'}
+                  </button>
+                </td>
+              </tr>
+              {expandedId === idx && (
+                <tr className="bg-orange-50/20">
+                  <td colSpan={4} className="p-8">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-10 animate-slide-up">
+                      <div className="space-y-4">
+                        <h4 className="text-[10px] font-black text-orange-600 uppercase tracking-widest">आवेदन कैसे करें (Roadmap)</h4>
+                        <div className="space-y-3 bg-white p-5 rounded-2xl border border-orange-100 shadow-sm">
+                          <div className="flex gap-3">
+                            <span className="w-5 h-5 rounded bg-orange-100 text-orange-600 flex items-center justify-center text-[10px] font-black">1</span>
+                            <div>
+                              <p className="text-[9px] font-black text-slate-400 uppercase">हस्ताक्षर</p>
+                              <p className="text-xs font-bold text-slate-800">{(scheme.signatures_required || []).join(", ")}</p>
+                            </div>
+                          </div>
+                          <div className="flex gap-3">
+                            <span className="w-5 h-5 rounded bg-orange-100 text-orange-600 flex items-center justify-center text-[10px] font-black">2</span>
+                            <div>
+                              <p className="text-[9px] font-black text-slate-400 uppercase">जमा केंद्र</p>
+                              <p className="text-xs font-bold text-slate-800">{scheme.submission_point || 'ई-मित्र केंद्र'}</p>
+                            </div>
+                          </div>
+                          <div className="flex gap-3">
+                            <span className="w-5 h-5 rounded bg-orange-100 text-orange-600 flex items-center justify-center text-[10px] font-black">3</span>
+                            <div>
+                              <p className="text-[9px] font-black text-slate-400 uppercase">प्रकार</p>
+                              <p className="text-xs font-bold text-slate-800">{scheme.application_type || 'ऑनलाइन'}</p>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-            <div className="space-y-3">
-              <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">🎁 योजना के लाभ</h4>
-              <p className="text-xs font-bold text-slate-800 leading-relaxed bg-slate-50 p-4 rounded-2xl border border-slate-100">{scheme.detailed_benefits}</p>
-            </div>
-            <div className="space-y-3">
-              <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">📄 जरूरी कागजात</h4>
-              <ul className="grid grid-cols-1 gap-2">
-                {(scheme.required_documents || []).map((doc, i) => (
-                  <li key={i} className="text-[11px] font-bold text-slate-600 flex items-center gap-3 bg-white p-3 rounded-xl border border-slate-100 shadow-sm">
-                    <span className="w-2 h-2 bg-green-500 rounded-full shrink-0"></span> {doc}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </div>
+                      <div className="space-y-4">
+                        <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">जरूरी दस्तावेज़</h4>
+                        <ul className="space-y-2">
+                          {(scheme.required_documents || []).map((doc, i) => (
+                            <li key={i} className="text-[11px] font-bold text-slate-600 flex items-center gap-3 bg-white p-3 rounded-xl border border-slate-100">
+                              <span className="w-1.5 h-1.5 bg-green-500 rounded-full"></span> {doc}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
 
-          <section className="relative p-6 bg-slate-900 rounded-[2.5rem] text-white overflow-hidden">
-            <h4 className="text-[11px] font-black text-orange-400 uppercase tracking-[0.2em] mb-6">आवेदन प्रक्रिया (Roadmap)</h4>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-8 relative z-10">
-              <div className="space-y-6">
-                <div className="flex gap-4">
-                  <div className="w-8 h-8 rounded-lg bg-orange-500/20 flex items-center justify-center shrink-0 border border-orange-500/30 text-xs font-black">1</div>
-                  <div>
-                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">हस्ताक्षर की आवश्यकता</p>
-                    <div className="flex flex-wrap gap-2 mt-2">
-                      {(scheme.signatures_required || []).map((sig, i) => (
-                        <span key={i} className="px-3 py-1 bg-white/10 rounded-full text-[10px] font-bold border border-white/10">{sig}</span>
-                      ))}
+                      <div className="space-y-4">
+                        <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">पात्रता का कारण</h4>
+                        <div className="bg-white p-5 rounded-2xl border border-slate-100 italic text-xs text-slate-500 font-bold leading-relaxed">
+                          "{scheme.eligibility_reason_hindi}"
+                        </div>
+                        <div className="pt-4 flex flex-col gap-3">
+                          <a href={scheme.official_pdf_link || "#"} target="_blank" rel="noreferrer" className="w-full py-3 bg-slate-900 text-white text-center rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-black">आधिकारिक पोर्टल</a>
+                          <p className="text-[9px] text-center text-slate-400 font-bold">स्रोत: {scheme.form_source || 'Govt Official Portal'}</p>
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                </div>
-                <div className="flex gap-4">
-                  <div className="w-8 h-8 rounded-lg bg-orange-500/20 flex items-center justify-center shrink-0 border border-orange-500/30 text-xs font-black">2</div>
-                  <div>
-                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">जमा केंद्र</p>
-                    <p className="text-xs font-black text-white mt-1">{scheme.submission_point || 'ई-मित्र (Rajasthan)'}</p>
-                  </div>
-                </div>
-              </div>
-              <div className="space-y-6">
-                <div className="flex gap-4">
-                  <div className="w-8 h-8 rounded-lg bg-orange-500/20 flex items-center justify-center shrink-0 border border-orange-500/30 text-xs font-black">3</div>
-                  <div>
-                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">तरीका</p>
-                    <p className="text-xs font-black text-white mt-1">{scheme.application_type || 'ऑनलाइन'}</p>
-                  </div>
-                </div>
-                <div className="flex gap-4">
-                  <div className="w-8 h-8 rounded-lg bg-orange-500/20 flex items-center justify-center shrink-0 border border-orange-500/30 text-xs font-black">4</div>
-                  <div>
-                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">लिंक</p>
-                    <p className="text-xs font-black text-white mt-1 truncate max-w-[150px]">{scheme.form_source || 'Govt Official Portal'}</p>
-                  </div>
-                </div>
-              </div>
-            </div>
-            <div className="mt-8 flex flex-col sm:flex-row gap-4 pt-6 border-t border-white/10">
-              <a href={scheme.official_pdf_link || "#"} target="_blank" rel="noreferrer" className="flex-1 bg-white text-slate-900 py-4 rounded-2xl text-center text-[10px] font-black uppercase tracking-widest shadow-lg hover:bg-orange-50 transition-all">फॉर्म डाउनलोड करें</a>
-              <button className="flex-1 bg-orange-600 text-white py-4 rounded-2xl text-center text-[10px] font-black uppercase tracking-widest shadow-lg hover:bg-orange-700 transition-all">ई-मित्र पोर्टल खोलें</button>
-            </div>
-          </section>
-        </div>
-      )}
+                  </td>
+                </tr>
+              )}
+            </React.Fragment>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 };
@@ -154,7 +162,7 @@ const App: React.FC = () => {
       setResult(res);
     } catch (err: any) { 
       console.error(err);
-      alert(err.message || "खोज विफल रही। API Keys जांचें।"); 
+      alert(err.message || "खोज विफल रही। कृपया इंटरनेट और Admin में API Key जांचें।"); 
     } finally {
       setLoading(false);
     }
@@ -163,10 +171,10 @@ const App: React.FC = () => {
   const handleAdminAutoFill = () => {
     setProfile({
       ...INITIAL_PROFILE,
-      fullName: 'Anita Meena', age: 32, gender: 'Female', marital_status: 'Married',
+      fullName: 'Anita Devi', age: 34, gender: 'Female', marital_status: 'Married',
       district: 'Banswara', is_tsp_area: 'Yes', category: 'ST',
       income: INCOME_SLABS[0], bpl: 'Yes', ration_card_type: 'BPL',
-      is_farmer: 'Yes', lactating: 'Yes', jan_aadhar_status: 'Yes'
+      is_farmer: 'Yes', jan_aadhar_status: 'Yes'
     });
     setDummyMode(true);
     dbService.setSetting('dummy_mode', true);
@@ -181,7 +189,7 @@ const App: React.FC = () => {
              <div className="w-10 h-10 bg-orange-600 rounded-2xl flex items-center justify-center text-xl shadow-lg ring-4 ring-orange-50">🇮🇳</div>
              <div>
                <h1 className="text-base font-black text-slate-800 leading-none">Sarkari Master Engine</h1>
-               <p className="text-[9px] font-black text-orange-600 uppercase tracking-widest mt-1">Rajasthan & Central AI Analyst</p>
+               <p className="text-[9px] font-black text-orange-600 uppercase tracking-widest mt-1">Live Search AI Verified (2024-25)</p>
              </div>
           </div>
           <nav className="flex bg-slate-100 p-1 rounded-2xl gap-1">
@@ -191,7 +199,7 @@ const App: React.FC = () => {
         </div>
       </header>
 
-      <main className="max-w-6xl mx-auto px-4 py-8 flex-1 w-full">
+      <main className="max-w-7xl mx-auto px-4 py-8 flex-1 w-full">
         {activeTab === 'form' && (
           <div className="space-y-8 animate-slide-up">
             {!result && !loading && (
@@ -199,9 +207,8 @@ const App: React.FC = () => {
                 <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
                   <div>
                     <h2 className="text-2xl font-black text-slate-800">पात्रता प्रोफाइल फॉर्म</h2>
-                    <p className="text-xs font-bold text-slate-400 mt-1">सटीक योजनाओं के लिए सही विवरण भरें</p>
+                    <p className="text-xs font-bold text-slate-400 mt-1">सरकारी वेबसाइटों से लाइव जानकारी प्राप्त करने के लिए विवरण भरें</p>
                   </div>
-                  {dummyMode && <span className="px-3 py-1.5 bg-red-600 text-white rounded-full text-[10px] font-black uppercase">Test Mode Enabled</span>}
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-y-10 gap-x-12">
@@ -275,45 +282,34 @@ const App: React.FC = () => {
 
                   <FormSection title="व्यवसाय और किसान" icon="🚜">
                     <div className="space-y-2">
-                      <label className="block text-[11px] font-black text-slate-500 uppercase ml-2">कार्य</label>
-                      <select value={profile.employment_status} onChange={e => setProfile({...profile, employment_status: e.target.value})} className="w-full p-4 bg-slate-50 rounded-2xl font-bold text-xs ring-1 ring-slate-100">{EMPLOYMENT_STATUS.map(s => <option key={s}>{s}</option>)}</select>
-                    </div>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <label className="block text-[11px] font-black text-slate-500 uppercase ml-2">किसान?</label>
-                        <select value={profile.is_farmer} onChange={e => setProfile({...profile, is_farmer: e.target.value})} className="w-full p-4 bg-slate-50 rounded-2xl font-bold text-xs ring-1 ring-slate-100">{YES_NO.map(y => <option key={y}>{y}</option>)}</select>
-                      </div>
-                      <div className="space-y-2">
-                        <label className="block text-[11px] font-black text-slate-500 uppercase ml-2">भूमि मालिक?</label>
-                        <select value={profile.land_owner} onChange={e => setProfile({...profile, land_owner: e.target.value})} className="w-full p-4 bg-slate-50 rounded-2xl font-bold text-xs ring-1 ring-slate-100">{YES_NO.map(y => <option key={y}>{y}</option>)}</select>
-                      </div>
-                    </div>
-                  </FormSection>
-
-                  <FormSection title="आईडी और बैंक" icon="📋">
-                    <div className="space-y-2">
-                      <label className="block text-[11px] font-black text-slate-500 uppercase ml-2">जन-आधार है?</label>
-                      <select value={profile.jan_aadhar_status} onChange={e => setProfile({...profile, jan_aadhar_status: e.target.value})} className="w-full p-4 bg-slate-50 rounded-2xl font-bold text-xs ring-1 ring-slate-100">{YES_NO.map(y => <option key={y}>{y}</option>)}</select>
+                      <label className="block text-[11px] font-black text-slate-500 uppercase ml-2">किसान?</label>
+                      <select value={profile.is_farmer} onChange={e => setProfile({...profile, is_farmer: e.target.value})} className="w-full p-4 bg-slate-50 rounded-2xl font-bold text-xs ring-1 ring-slate-100">{YES_NO.map(y => <option key={y}>{y}</option>)}</select>
                     </div>
                     <div className="space-y-2">
-                      <label className="block text-[11px] font-black text-slate-500 uppercase ml-2">DBT सक्रिय है?</label>
-                      <select value={profile.bank_account_dbt} onChange={e => setProfile({...profile, bank_account_dbt: e.target.value})} className="w-full p-4 bg-slate-50 rounded-2xl font-bold text-xs ring-1 ring-slate-100">{YES_NO.map(y => <option key={y}>{y}</option>)}</select>
+                      <label className="block text-[11px] font-black text-slate-500 uppercase ml-2">आईडी</label>
+                      <div className="grid grid-cols-2 gap-4">
+                        <select value={profile.jan_aadhar_status} onChange={e => setProfile({...profile, jan_aadhar_status: e.target.value})} className="w-full p-4 bg-slate-50 rounded-2xl font-bold text-xs ring-1 ring-slate-100">{YES_NO.map(y => <option key={y}>{y}</option>)}</select>
+                        <p className="text-[8px] font-bold text-slate-400 self-center">जन-आधार कार्ड</p>
+                      </div>
                     </div>
                   </FormSection>
                 </div>
 
                 <div className="pt-6">
-                  <button type="submit" className="w-full py-6 bg-orange-600 text-white font-black rounded-3xl shadow-xl hover:bg-orange-700 active:scale-95 transition-all text-sm md:text-base">असली योजनाएं खोजें 🚀</button>
+                  <button type="submit" className="w-full py-6 bg-orange-600 text-white font-black rounded-3xl shadow-xl hover:bg-orange-700 active:scale-95 transition-all text-sm md:text-base">सरकारी पोर्टल से लाइव खोजें 🚀</button>
                 </div>
               </form>
             )}
 
             {loading && (
               <div className="py-24 text-center space-y-8 flex flex-col items-center justify-center">
-                <div className="w-20 h-20 border-8 border-orange-100 border-t-orange-600 rounded-full animate-spin shadow-inner"></div>
+                <div className="relative">
+                  <div className="w-24 h-24 border-[10px] border-orange-100 border-t-orange-600 rounded-full animate-spin shadow-inner"></div>
+                  <div className="absolute inset-0 flex items-center justify-center text-xs font-black text-orange-600">AI</div>
+                </div>
                 <div className="space-y-2">
-                  <p className="font-black text-slate-800 text-lg">असली डेटा खोजा जा रहा है...</p>
-                  <p className="font-bold text-slate-400 uppercase text-[10px] tracking-[0.3em]">Checking Rajasthan & Central Portals (2024-2026)</p>
+                  <p className="font-black text-slate-800 text-xl">सरकारी पोर्टल्स (Rajasthan & India) की लाइव जांच हो रही है...</p>
+                  <p className="font-bold text-slate-400 uppercase text-[10px] tracking-[0.3em]">Searching india.gov.in & rajasthan.gov.in</p>
                 </div>
               </div>
             )}
@@ -323,8 +319,8 @@ const App: React.FC = () => {
                 <div className="bg-white p-6 md:p-12 rounded-[3.5rem] shadow-2xl border border-slate-50">
                    <div className="flex flex-col sm:flex-row justify-between items-center mb-10 gap-4">
                      <div>
-                       <h2 className="text-2xl font-black text-slate-800">खोज परिणाम ({result.eligible_schemes.length})</h2>
-                       <p className="text-xs font-bold text-slate-400 mt-1">आपकी पात्रता के अनुसार वास्तविक योजनाएं</p>
+                       <h2 className="text-2xl font-black text-slate-800">लाइव खोज परिणाम ({result.eligible_schemes.length})</h2>
+                       <p className="text-xs font-bold text-slate-400 mt-1">आपकी पात्रता के अनुसार वास्तविक और सक्रिय योजनाएं</p>
                      </div>
                      <button onClick={() => setResult(null)} className="px-8 py-3 bg-slate-100 text-slate-500 font-black rounded-2xl text-[10px] uppercase hover:bg-orange-50 hover:text-orange-600 transition-all">नई खोज</button>
                    </div>
@@ -333,16 +329,14 @@ const App: React.FC = () => {
                       {result.hindiContent}
                    </div>
 
-                   <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                      {result.eligible_schemes.length > 0 ? (
-                        result.eligible_schemes.map((s, idx) => <SchemeCard key={idx} scheme={s} />)
-                      ) : (
-                        <div className="col-span-1 md:col-span-2 text-center py-20 bg-slate-50 rounded-[3rem] border-2 border-dashed border-slate-200">
-                          <p className="text-xl font-black text-slate-300">कोई उपयुक्त योजना नहीं मिली।</p>
-                          <p className="text-xs font-bold text-slate-400 mt-2">कृपया Admin में अपनी API Keys चेक करें।</p>
-                        </div>
-                      )}
-                   </div>
+                   {result.eligible_schemes.length > 0 ? (
+                     <SchemesTable schemes={result.eligible_schemes} />
+                   ) : (
+                     <div className="text-center py-24 bg-slate-50 rounded-[3rem] border-2 border-dashed border-slate-200">
+                       <p className="text-xl font-black text-slate-300">कोई डेटा नहीं मिला।</p>
+                       <p className="text-xs font-bold text-slate-400 mt-2">कृपया Admin में अपनी API Key जांचें या विवरण बदलें।</p>
+                     </div>
+                   )}
                 </div>
               </div>
             )}
@@ -371,12 +365,8 @@ const App: React.FC = () => {
                   <h3 className="text-xs font-black uppercase text-slate-400">API Settings</h3>
                   <div className="space-y-4">
                      <div className="space-y-1">
-                        <label className="text-[10px] font-black text-slate-400 uppercase ml-2">Gemini Key</label>
+                        <label className="text-[10px] font-black text-slate-400 uppercase ml-2">Gemini Key (Required for Search)</label>
                         <input type="password" value={apiKeys.gemini} onChange={e => setApiKeys({...apiKeys, gemini: e.target.value})} className="w-full p-4 bg-slate-50 rounded-2xl font-mono text-[11px] ring-1 ring-slate-200" placeholder="Gemini Key" />
-                     </div>
-                     <div className="space-y-1">
-                        <label className="text-[10px] font-black text-slate-400 uppercase ml-2">Groq Key</label>
-                        <input type="password" value={apiKeys.groq} onChange={e => setApiKeys({...apiKeys, groq: e.target.value})} className="w-full p-4 bg-slate-50 rounded-2xl font-mono text-[11px] ring-1 ring-slate-200" placeholder="Groq Key (gsk_...)" />
                      </div>
                      <button onClick={() => dbService.setSetting('api_keys', apiKeys).then(() => alert("Settings Saved!"))} className="w-full py-4 bg-slate-900 text-white font-black rounded-2xl shadow-xl hover:bg-black transition-all">Save Keys</button>
                   </div>
@@ -388,7 +378,7 @@ const App: React.FC = () => {
       </main>
 
       <footer className="py-8 text-center bg-white border-t border-slate-100 shrink-0 mt-auto w-full">
-        <p className="opacity-30 text-[9px] font-black uppercase tracking-[0.4em]">Sarkari Master Engine • Real Data Verified (2024-2026)</p>
+        <p className="opacity-30 text-[9px] font-black uppercase tracking-[0.4em]">Sarkari Master Engine • Live Web Grounding (2024-2025)</p>
       </footer>
     </div>
   );
