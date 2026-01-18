@@ -3,24 +3,32 @@ import { GoogleGenAI } from "@google/genai";
 import { UserProfile, AnalysisResponse, Scheme } from "../types";
 import { dbService } from "./dbService";
 
-const SYSTEM_INSTRUCTION = `You are the Lead Welfare Architect for the Government of India and Rajasthan. 
-Your task is to analyze user eligibility for schemes in the 2024-25 and 2026 cycles.
+const SYSTEM_INSTRUCTION = `You are the Lead Welfare Architect for India & Rajasthan. 
+Your goal is to provide a comprehensive list of eligible welfare schemes for the 2024-25 and 2026 cycles.
 
-STRICT INSTRUCTIONS:
-1. RESPONSE LANGUAGE: Hindi (Devanagari script).
-2. ACCURACY: Use the user's Age, Income, Category, and Profession as hard filters.
-3. SIGNATURES: Specify if Patwari, Tehsildar, or Sarpanch signature is needed.
-4. JSON FORMAT: You MUST wrap the JSON array inside ---JSON_START--- and ---JSON_END---.
+STRICT JSON OUTPUT RULES:
+1. Always return a JSON object with the key "eligible_schemes".
+2. If no schemes are a 100% match, return schemes where the user is "CONDITIONAL".
+3. Use Hindi for text fields like yojana_name, short_purpose_hindi, eligibility_reason_hindi.
+4. Surround the JSON with ---JSON_START--- and ---JSON_END---.
 
-REQUIRED JSON FIELDS:
-- yojana_name: String
-- government: "Rajasthan Govt" or "Central Govt"
-- category: String
-- eligibility_status: "ELIGIBLE" | "NOT_ELIGIBLE" | "CONDITIONAL"
-- eligibility_reason_hindi: String
-- signatures_required: Array of strings
-- submission_point: String
-- official_pdf_link: String`;
+JSON Schema for each item:
+{
+  "yojana_name": "Scheme Name",
+  "government": "Rajasthan Govt" | "Central Govt",
+  "category": "e.g. Health, Education, Farming",
+  "short_purpose_hindi": "...",
+  "detailed_benefits": "...",
+  "eligibility_criteria": ["..."],
+  "eligibility_status": "ELIGIBLE" | "NOT_ELIGIBLE" | "CONDITIONAL",
+  "eligibility_reason_hindi": "...",
+  "required_documents": ["..."],
+  "form_source": "...",
+  "application_type": "Online" | "Offline" | "Both",
+  "signatures_required": ["..."],
+  "submission_point": "...",
+  "official_pdf_link": "..."
+}`;
 
 async function hashProfile(profile: UserProfile): Promise<string> {
   const msgUint8 = new TextEncoder().encode(JSON.stringify(profile));
@@ -32,22 +40,23 @@ async function hashProfile(profile: UserProfile): Promise<string> {
 function extractJson(text: string): any {
   if (!text) return null;
   try {
-    // Try to find custom tags first
+    // Attempt 1: Custom tags
     const customMatch = text.match(/---JSON_START---([\s\S]*?)---JSON_END---/);
     if (customMatch) return JSON.parse(customMatch[1].trim());
 
-    // Fallback to markdown code blocks
-    const codeMatch = text.match(/```json\s*([\s\S]*?)\s*```/) || text.match(/```\s*([\s\S]*?)\s*```/);
-    if (codeMatch) return JSON.parse(codeMatch[1].trim());
+    // Attempt 2: Markdown block
+    const markdownMatch = text.match(/```json\s*([\s\S]*?)\s*```/i);
+    if (markdownMatch) return JSON.parse(markdownMatch[1].trim());
 
-    // Fallback to finding raw array/object
+    // Attempt 3: Any JSON array
     const arrayMatch = text.match(/\[\s*\{[\s\S]*\}\s*\]/);
     if (arrayMatch) return JSON.parse(arrayMatch[0].trim());
-
+    
+    // Attempt 4: Any JSON object
     const objectMatch = text.match(/\{\s*"eligible_schemes"[\s\S]*\}/);
     if (objectMatch) return JSON.parse(objectMatch[0].trim());
   } catch (e) {
-    console.error("Critical JSON Parse Error:", e, "Raw Text sample:", text.substring(0, 100));
+    console.error("JSON Extraction failed:", e);
   }
   return null;
 }
@@ -55,7 +64,6 @@ function extractJson(text: string): any {
 export async function analyzeEligibility(profile: UserProfile, isDummy: boolean): Promise<AnalysisResponse> {
   const profileHash = await hashProfile(profile);
   
-  // 1. Check DB Cache
   if (!isDummy) {
     const cached = await dbService.getCache(profileHash);
     if (cached) return { ...cached, cached: true };
@@ -65,44 +73,33 @@ export async function analyzeEligibility(profile: UserProfile, isDummy: boolean)
   const geminiKey = savedKeys?.gemini || process.env.API_KEY;
   const groqKey = savedKeys?.groq;
 
-  let apiResponseText = "";
+  let rawText = "";
   let groundingSources: any[] = [];
 
-  const prompt = `User Profile: ${JSON.stringify(profile)}. 
-Identify all applicable Rajasthan and Central Govt schemes for 2024-25 and upcoming 2026.
-Explain exactly WHY the user is eligible or not in Hindi. 
-List mandatory documents, signature requirements (Patwari/Tehsildar), and submission points.
-Provide a Hindi summary of findings first, then the JSON block.`;
+  const prompt = `Profile: ${JSON.stringify(profile)}.
+Find schemes for 2024-25 and 2026 for Rajasthan and Central Govt.
+Be specific about the "Application Process" (signatures and submission points).
+Return a Hindi summary followed by the JSON.`;
 
-  // --- ATTEMPT 1: GROQ ---
+  // Attempt Groq
   if (groqKey && groqKey.startsWith('gsk_')) {
     try {
-      const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      const resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
         method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${groqKey}`,
-          'Content-Type': 'application/json'
-        },
+        headers: { 'Authorization': `Bearer ${groqKey}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
           model: 'llama-3.3-70b-versatile',
-          messages: [
-            { role: 'system', content: SYSTEM_INSTRUCTION },
-            { role: 'user', content: prompt }
-          ],
-          temperature: 0.2
+          messages: [{ role: 'system', content: SYSTEM_INSTRUCTION }, { role: 'user', content: prompt }],
+          temperature: 0.1
         })
       });
-      const data = await response.json();
-      if (data.choices?.[0]?.message?.content) {
-        apiResponseText = data.choices[0].message.content;
-      }
-    } catch (e) {
-      console.error("Groq API Error:", e);
-    }
+      const data = await resp.json();
+      rawText = data.choices?.[0]?.message?.content || "";
+    } catch (e) { console.error("Groq failed:", e); }
   }
 
-  // --- ATTEMPT 2: GEMINI 3 PRO (Primary Grounding Engine) ---
-  if (!apiResponseText && geminiKey) {
+  // Attempt Gemini (with Search)
+  if (!rawText && geminiKey) {
     try {
       const ai = new GoogleGenAI({ apiKey: geminiKey });
       const result = await ai.models.generateContent({
@@ -113,67 +110,51 @@ Provide a Hindi summary of findings first, then the JSON block.`;
           tools: [{ googleSearch: {} }]
         }
       });
-      apiResponseText = result.text || "";
+      rawText = result.text || "";
       groundingSources = result.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
-    } catch (e) {
-      console.error("Gemini API Error:", e);
-    }
+    } catch (e) { console.error("Gemini failed:", e); }
   }
 
-  if (!apiResponseText) {
-    throw new Error("Result fetching failed. Please check your API Keys in the Admin Panel.");
-  }
+  if (!rawText) throw new Error("Could not connect to AI services. Please check keys.");
 
-  const parsed = extractJson(apiResponseText);
-  let schemes: Scheme[] = [];
+  const data = extractJson(rawText);
+  let schemes = data?.eligible_schemes || (Array.isArray(data) ? data : []);
 
-  if (Array.isArray(parsed)) {
-    schemes = parsed;
-  } else if (parsed?.eligible_schemes) {
-    schemes = parsed.eligible_schemes;
-  }
-
-  // Final validation and cleaning
-  schemes = schemes.filter(s => !!s.yojana_name).map(s => ({
+  // Ensure mandatory fields
+  schemes = schemes.map((s: any) => ({
     ...s,
-    eligibility_status: s.eligibility_status || 'ELIGIBLE',
-    government: s.government || 'Rajasthan Govt'
+    government: s.government || 'Rajasthan Govt',
+    eligibility_status: s.eligibility_status || 'ELIGIBLE'
   }));
 
-  const finalResponse: AnalysisResponse = {
-    hindiContent: apiResponseText.split(/---JSON_START---|```json|\[/)[0].trim(),
+  const response: AnalysisResponse = {
+    hindiContent: rawText.split(/---JSON_START---|```json|\[/)[0].trim(),
     eligible_schemes: schemes,
     groundingSources,
     timestamp: Date.now()
   };
 
   if (!isDummy && schemes.length > 0) {
-    await dbService.saveCache(profileHash, finalResponse);
+    await dbService.saveCache(profileHash, response);
     await dbService.saveUserSubmission(profile);
   }
 
-  return finalResponse;
+  return response;
 }
 
 export async function fetchMasterSchemes(category: string) {
   const savedKeys = await dbService.getSetting<any>('api_keys');
   const key = savedKeys?.gemini || process.env.API_KEY;
   if (!key) return;
-
   try {
     const ai = new GoogleGenAI({ apiKey: key });
-    const response = await ai.models.generateContent({
+    const result = await ai.models.generateContent({
       model: 'gemini-3-pro-preview',
-      contents: `List 15 major ${category} schemes for 2024-25 and 2026. Use strict JSON format.`,
+      contents: `Fetch 15 major ${category} schemes for 2024-2026 with full metadata as JSON.`,
       config: { tools: [{ googleSearch: {} }] }
     });
-    
-    const fetched = extractJson(response.text || "");
-    const schemes = fetched?.eligible_schemes || (Array.isArray(fetched) ? fetched : []);
-    for (const s of schemes) {
-      if (s.yojana_name) await dbService.upsertScheme(s);
-    }
-  } catch (e) {
-    console.error("Master Sync Error:", e);
-  }
+    const data = extractJson(result.text || "");
+    const list = data?.eligible_schemes || (Array.isArray(data) ? data : []);
+    for (const s of list) { if (s.yojana_name) await dbService.upsertScheme(s); }
+  } catch (e) { console.error("Sync failed:", e); }
 }
