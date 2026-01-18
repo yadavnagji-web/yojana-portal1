@@ -1,60 +1,92 @@
 
+export type EligibilityStatus = 'ELIGIBLE' | 'NOT_ELIGIBLE' | 'CONDITIONAL';
+
 export interface Scheme {
   yojana_name: string;
   government: 'Rajasthan Govt' | 'Central Govt';
-  applicable_area: string;
-  beneficiary_type: string[];
-  caste_category: string[];
+  category: string;
   short_purpose_hindi: string;
   detailed_benefits: string;
-  eligibility: string[];
+  eligibility_criteria: string[];
+  eligibility_status?: EligibilityStatus;
+  eligibility_reason_hindi: string;
   required_documents: string[];
-  application_process_steps: string[];
-  online_apply_link: string;
-  offline_process: string;
+  
+  // Application Process Guidance (MANDATORY)
+  form_source: string; // e.g., "e-Mitra Portal", "Jan-Aadhar Website"
+  application_type: 'Online' | 'Offline' | 'Both';
+  signatures_required: string[]; // e.g., ["Sarpanch", "Patwari", "Applicant"]
+  submission_point: string; // e.g., "Gram Panchayat", "Tehsil Office"
   official_pdf_link: string;
-  scheme_status: 'NEW' | 'UPDATED' | 'ACTIVE' | 'EXPIRED';
-  hash_signature?: string;
-  last_checked_date?: number;
+  
+  scheme_status: 'NEW' | 'ACTIVE' | 'EXPIRED';
+  rules_json?: any;
 }
 
 export interface UserProfile {
+  // Basic Details
+  fullName: string;
+  phone: string;
   gender: string;
-  age: string;
+  dob: string;
+  age: number;
   marital_status: string;
   state: string;
   district: string;
   rural_or_urban: string;
-  is_tsp_area: string;
-  category: string;
-  beneficiary_type: string;
-  minority: string;
-  disability: string;
-  disability_percent: string;
-  income: string;
-  bpl: string;
-  education: string;
-  occupation: string;
-  labour_card: string;
-  pregnant: string;
-  lactating: string;
+  
+  // Family & Income
   family_count: string;
   head_of_family: string;
-  // Logical fields for Rajasthan specific schemes
-  jan_aadhar_status: string;
+  income: string;
+  bpl: string;
   ration_card_type: string;
-  pension_status: string;
-  parent_status: string;
-  children_before_2002: string;
-  children_after_2002: string;
-  land_owner: string;
+  
+  // Category
+  category: string;
+  is_tsp_area: string;
+  minority: string;
+
+  // Education
+  is_studying: string;
+  education: string;
+  institution_type: string;
   current_class: string;
+
+  // Women & Health
+  pregnant: string;
+  lactating: string;
+  disability: string;
+  disability_percent: string;
+
+  // Employment & Farmer
+  employment_status: string;
+  labour_card: string;
+  mnega_card: string;
+  is_farmer: string;
+  land_owner: string;
+  pm_kisan_beneficiary: string;
+
+  // Social
+  pension_status: string;
+  is_senior_citizen: string;
+  is_destitute: string;
+
+  // Govt Service
+  is_govt_employee: string;
+  family_govt_employee: string;
+
+  // IDs
+  jan_aadhar_status: string;
+  bank_account_dbt: string;
 }
 
 export interface AnalysisResponse {
   hindiContent: string;
   eligible_schemes: Scheme[];
   groundingSources?: any[];
+  cached?: boolean;
+  timestamp?: number;
 }
 
 export interface AuthState {
@@ -62,12 +94,8 @@ export interface AuthState {
   user: string | null;
 }
 
-export interface AIAgentLog {
-  id: string;
+export interface CachedAnalysis {
+  profileHash: string;
+  response: AnalysisResponse;
   timestamp: number;
-  agent: string;
-  action: string;
-  description: string;
-  status: 'pending' | 'applied' | 'rolled_back';
-  diff?: string;
 }

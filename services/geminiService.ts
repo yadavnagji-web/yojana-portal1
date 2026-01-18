@@ -3,170 +3,164 @@ import { GoogleGenAI } from "@google/genai";
 import { UserProfile, AnalysisResponse, Scheme } from "../types";
 import { dbService } from "./dbService";
 
-const SYSTEM_INSTRUCTION = `You are a world-class Indian Government Welfare Scheme Analyst. 
-Analyze eligibility for Central and Rajasthan state schemes. 
-Respond in polite Hindi summary followed by a JSON array of matches.
+const SYSTEM_INSTRUCTION = `You are a world-class Indian Government Welfare Scheme Architect and Rajasthan Process Specialist.
+Task: Evaluate eligibility for user profiles with 100% accuracy.
 
-STRICT JSON OUTPUT FORMAT:
+DATA SCOPE:
+- Current active schemes (2024-25).
+- Upcoming/Announced schemes for 2026.
+- Central Government and Rajasthan State Government.
+
+CRITICAL REQUIREMENTS:
+1. LANGUAGE: Hindi language for all user-facing summaries, reasons, and instructions.
+2. OFFICIAL FORMS: Provide EXACT application workflow based on official Rajasthan Dept/e-Mitra rules.
+3. SIGNATURES: Identify precisely WHO must sign the form (e.g., Patwari, Sarpanch, Ward Member, Tehsildar, Principal, Gazetted Officer).
+4. SUBMISSION: Identify precisely WHERE the form is physically or digitally submitted.
+
+STRICT JSON OUTPUT FORMAT inside ---JSON_START--- and ---JSON_END---:
 {
   "eligible_schemes": [
     {
       "yojana_name": string,
       "government": "Rajasthan Govt" | "Central Govt",
-      "applicable_area": string,
-      "beneficiary_type": string[],
-      "caste_category": string[],
+      "category": string,
       "short_purpose_hindi": string,
       "detailed_benefits": string,
-      "eligibility": string[],
+      "eligibility_criteria": string[],
+      "eligibility_status": "ELIGIBLE" | "NOT_ELIGIBLE" | "CONDITIONAL",
+      "eligibility_reason_hindi": string,
       "required_documents": string[],
-      "application_process_steps": string[],
-      "online_apply_link": string,
-      "offline_process": string,
+      "form_source": string,
+      "application_type": "Online" | "Offline" | "Both",
+      "signatures_required": string[],
+      "submission_point": string,
       "official_pdf_link": string,
-      "scheme_status": "NEW" | "UPDATED" | "ACTIVE" | "EXPIRED"
+      "scheme_status": "NEW" | "ACTIVE" | "UPCOMING_2026"
     }
   ]
 }`;
 
+async function hashProfile(profile: UserProfile): Promise<string> {
+  const msgUint8 = new TextEncoder().encode(JSON.stringify(profile));
+  const hashBuffer = await crypto.subtle.digest('SHA-256', msgUint8);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
 function extractJson(text: string): any {
   try {
-    const jsonMatch = text.match(/---JSON_START---([\s\S]*?)---JSON_END---/) || 
-                     text.match(/```json\s*([\s\S]*?)\s*```/) ||
-                     text.match(/\[\s*\{[\s\S]*\}\s*\]/) ||
-                     text.match(/\{\s*"eligible_schemes"[\s\S]*\}/);
-    
-    if (jsonMatch) {
-      const content = jsonMatch[1] || jsonMatch[0];
-      return JSON.parse(content.trim());
-    }
-  } catch (e) {
-    console.error("JSON Extraction failed:", e);
-  }
+    const match = text.match(/---JSON_START---([\s\S]*?)---JSON_END---/) || text.match(/```json\s*([\s\S]*?)\s*```/);
+    if (match) return JSON.parse(match[1].trim());
+    const arrayMatch = text.match(/\[\s*\{[\s\S]*\}\s*\]/);
+    if (arrayMatch) return JSON.parse(arrayMatch[0].trim());
+  } catch (e) { console.error("JSON Error", e); }
   return null;
 }
 
-/**
- * Gets the active key and provider type
- */
-async function getActiveKey() {
-  await dbService.init();
-  const dbKeys = await dbService.getSetting<any>('api_keys');
+export async function analyzeEligibility(profile: UserProfile, isDummy: boolean): Promise<AnalysisResponse> {
+  const profileHash = await hashProfile(profile);
   
-  const geminiKey = dbKeys?.gemini?.trim();
-  const groqKey = dbKeys?.groq?.trim();
-  const envKey = process.env.API_KEY?.trim();
-  
-  const finalKey = geminiKey || groqKey || envKey;
-  
-  if (!finalKey || finalKey === "" || finalKey === "YOUR_API_KEY") {
-    throw new Error("API Key missing! Kripya Admin Panel mein API Key set karein.");
+  // 1. Database-First: Check Cache
+  if (!isDummy) {
+    const cached = await dbService.getCache(profileHash);
+    if (cached) return { ...cached, cached: true };
   }
 
-  // Detect Provider
-  const isGroq = finalKey.startsWith('gsk_');
-  return { key: finalKey, isGroq };
-}
+  // 2. Resolve API Keys
+  const savedKeys = await dbService.getSetting<any>('api_keys');
+  const geminiKey = savedKeys?.gemini || process.env.API_KEY;
+  const groqKey = savedKeys?.groq;
 
-/**
- * Unified request handler for both Gemini and Groq
- */
-async function callAI(prompt: string, useSearch = false) {
-  const { key, isGroq } = await getActiveKey();
+  let text = "";
+  let groundingSources: any[] = [];
+  
+  // Refined prompt for 2024-25 and 2026 data
+  const prompt = `Perform a deep eligibility analysis for this user profile: ${JSON.stringify(profile)}.
+Use Google Search to find the latest 2024-25 active schemes and upcoming 2026 schemes/announcements from Rajasthan Government (e-Mitra, Jan-Aadhar) and Central Government.
+Include specific details on required signatures (Patwari, Sarpanch, etc.) and exact submission points.`;
 
-  if (isGroq) {
-    // Groq API Call (OpenAI compatible)
-    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${key}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        model: 'llama-3.3-70b-versatile',
-        messages: [
-          { role: 'system', content: SYSTEM_INSTRUCTION },
-          { role: 'user', content: prompt }
-        ],
-        temperature: 0.1
-      })
-    });
-
-    if (!response.ok) {
-      const error = await response.json();
-      if (response.status === 429) throw new Error("Groq API Limit Exhausted!");
-      if (response.status === 401 || response.status === 400) throw new Error("Invalid Groq API Key! Please check your key in Admin panel.");
-      throw new Error(error?.error?.message || "Groq API Error");
-    }
-
-    const data = await response.json();
-    return { text: data.choices[0].message.content, groundingSources: [] };
-  } else {
-    // Gemini SDK Call
-    const ai = new GoogleGenAI({ apiKey: key });
+  // Try Groq first for reasoning if key exists
+  if (groqKey && groqKey.startsWith('gsk_')) {
     try {
+      const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${groqKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'llama-3.3-70b-versatile',
+          messages: [{ role: 'system', content: SYSTEM_INSTRUCTION }, { role: 'user', content: prompt }],
+          temperature: 0.1
+        })
+      });
+      const data = await response.json();
+      if (data.choices?.[0]?.message?.content) {
+        text = data.choices[0].message.content;
+      }
+    } catch (e) { console.error("Groq Fail", e); }
+  }
+
+  // Fallback or Dual Fetch: Gemini 3 Pro with Search Grounding
+  if (geminiKey) {
+    try {
+      const ai = new GoogleGenAI({ apiKey: geminiKey });
       const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
+        model: 'gemini-3-pro-preview',
         contents: prompt,
         config: { 
           systemInstruction: SYSTEM_INSTRUCTION, 
-          tools: useSearch ? [{ googleSearch: {} }] : [],
-          temperature: 0.1 
-        },
+          tools: [{ googleSearch: {} }] 
+        }
       });
-
-      return { 
-        text: response.text || "", 
-        groundingSources: response.candidates?.[0]?.groundingMetadata?.groundingChunks || [] 
-      };
-    } catch (err: any) {
-      const errMsg = err.message || "";
-      if (errMsg.includes("429") || errMsg.includes("quota")) throw new Error("Gemini API Limit Exhausted!");
-      if (errMsg.includes("400")) throw new Error("Invalid Gemini API Key! Please check your key in Admin panel.");
-      throw err;
+      
+      // If we already got text from Groq, we can merge or use Gemini as primary for Grounding accuracy
+      const geminiText = response.text || "";
+      const geminiGrounding = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
+      
+      // Prefer Gemini if Groq failed or for Search accuracy
+      if (!text || geminiGrounding.length > 0) {
+        text = geminiText;
+        groundingSources = geminiGrounding;
+      }
+    } catch (e) {
+      console.error("Gemini Fail", e);
+      if (!text) throw new Error("AI Processing Failed. Please check API keys in Admin.");
     }
   }
-}
 
-export async function analyzeEligibility(profile: UserProfile): Promise<AnalysisResponse> {
-  const localSchemes = await dbService.getAllSchemes();
-  const dbNames = localSchemes.map(s => s.yojana_name).join(", ");
+  const extracted = extractJson(text);
+  let schemes = extracted?.eligible_schemes || (Array.isArray(extracted) ? extracted : []);
 
-  const prompt = `Analyze eligibility for: ${JSON.stringify(profile)}. 
-  Database Context (Previously fetched): ${dbNames}.
-  Output Hindi summary and JSON array inside ---JSON_START--- and ---JSON_END--- tags.`;
+  const result: AnalysisResponse = {
+    hindiContent: text.split(/---JSON_START---|```json|\[/)[0].trim(),
+    eligible_schemes: schemes,
+    groundingSources,
+    timestamp: Date.now()
+  };
 
-  try {
-    const { text, groundingSources } = await callAI(prompt, true);
-    const extracted = extractJson(text);
-    const eligible_schemes = extracted?.eligible_schemes || (Array.isArray(extracted) ? extracted : []);
-
-    const result = {
-      hindiContent: text.split(/---JSON_START---|```json|\[/)[0].trim(),
-      eligible_schemes,
-      groundingSources: groundingSources
-    };
-
-    await dbService.saveAppData('last_result', result);
-    return result;
-  } catch (err: any) {
-    throw new Error(err.message || "AI analysis fail ho gaya.");
+  // 3. Save to DB if NOT dummy
+  if (!isDummy) {
+    await dbService.saveCache(profileHash, result);
+    await dbService.saveUserSubmission(profile);
   }
+
+  return result;
 }
 
-export async function fetchMasterSchemes(category: 'Central' | 'Rajasthan'): Promise<Scheme[]> {
-  const prompt = `List 15 updated ${category} welfare schemes 2024-2025. Output only JSON array.`;
+export async function fetchMasterSchemes(category: string) {
+  const savedKeys = await dbService.getSetting<any>('api_keys');
+  const key = savedKeys?.gemini || process.env.API_KEY;
+  if (!key) return;
 
-  try {
-    const { text } = await callAI(prompt, true);
-    const fetched = extractJson(text);
-    
-    if (Array.isArray(fetched)) {
-      for (const s of fetched) await dbService.upsertScheme(s);
-      return fetched;
-    }
-    throw new Error("Invalid response format.");
-  } catch (err: any) {
-    throw err;
+  const ai = new GoogleGenAI({ apiKey: key });
+  const response = await ai.models.generateContent({
+    model: 'gemini-3-pro-preview',
+    contents: `List 15 major ${category} government schemes for 2024-25 and upcoming 2026 policies. 
+Return strictly as JSON with full application workflow including signature requirements and submission points.`,
+    config: { tools: [{ googleSearch: {} }] }
+  });
+  
+  const fetched = extractJson(response.text || "");
+  const schemes = fetched?.eligible_schemes || (Array.isArray(fetched) ? fetched : []);
+  for (const s of schemes) {
+    if (s.yojana_name) await dbService.upsertScheme(s);
   }
 }

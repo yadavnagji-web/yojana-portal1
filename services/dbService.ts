@@ -1,12 +1,12 @@
 
-import { Scheme, AIAgentLog, UserProfile, AnalysisResponse } from "../types";
+import { Scheme, UserProfile, AnalysisResponse, CachedAnalysis } from "../types";
 
-const DB_NAME = "SarkariYojanaProDB";
-const DB_VERSION = 6; 
-const SCHEME_STORE = "schemes_v2";
+const DB_NAME = "SarkariYojanaMasterDB";
+const DB_VERSION = 11; // Incremented to ensure fresh stores and fix keyPath issues
+const SCHEME_STORE = "schemes";
 const SETTINGS_STORE = "settings";
-const LOG_STORE = "ai_logs";
-const DATA_STORE = "app_data"; // Store for profile and results
+const CACHE_STORE = "analysis_cache";
+const USER_RECORDS_STORE = "user_submissions";
 
 export class DBService {
   private static instance: DBService;
@@ -15,9 +15,7 @@ export class DBService {
   private constructor() {}
 
   public static getInstance(): DBService {
-    if (!DBService.instance) {
-      DBService.instance = new DBService();
-    }
+    if (!DBService.instance) DBService.instance = new DBService();
     return DBService.instance;
   }
 
@@ -28,78 +26,62 @@ export class DBService {
 
       request.onupgradeneeded = (event) => {
         const db = (event.target as IDBOpenDBRequest).result;
-        if (!db.objectStoreNames.contains(SCHEME_STORE)) {
-          db.createObjectStore(SCHEME_STORE, { keyPath: "yojana_name" });
-        }
-        if (!db.objectStoreNames.contains(SETTINGS_STORE)) {
-          db.createObjectStore(SETTINGS_STORE);
-        }
-        if (!db.objectStoreNames.contains(LOG_STORE)) {
-          db.createObjectStore(LOG_STORE, { keyPath: "id" });
-        }
-        if (!db.objectStoreNames.contains(DATA_STORE)) {
-          db.createObjectStore(DATA_STORE);
-        }
+        
+        // Re-create stores if they exist but might have incorrect keyPath configuration from older versions
+        if (db.objectStoreNames.contains(SCHEME_STORE)) db.deleteObjectStore(SCHEME_STORE);
+        db.createObjectStore(SCHEME_STORE, { keyPath: "yojana_name" });
+
+        if (db.objectStoreNames.contains(SETTINGS_STORE)) db.deleteObjectStore(SETTINGS_STORE);
+        db.createObjectStore(SETTINGS_STORE); // Out-of-line keys
+
+        if (db.objectStoreNames.contains(CACHE_STORE)) db.deleteObjectStore(CACHE_STORE);
+        db.createObjectStore(CACHE_STORE, { keyPath: "profileHash" });
+
+        if (db.objectStoreNames.contains(USER_RECORDS_STORE)) db.deleteObjectStore(USER_RECORDS_STORE);
+        db.createObjectStore(USER_RECORDS_STORE, { autoIncrement: true });
       };
 
-      request.onsuccess = (event) => {
-        this.db = (event.target as IDBOpenDBRequest).result;
-        resolve();
+      request.onsuccess = (e) => { 
+        this.db = (e.target as IDBOpenDBRequest).result; 
+        resolve(); 
       };
-
-      request.onerror = (event) => reject((event.target as IDBOpenDBRequest).error);
+      request.onerror = (e) => reject((e.target as IDBOpenDBRequest).error);
     });
   }
 
-  public async addLog(log: AIAgentLog): Promise<void> {
+  public async saveCache(hash: string, response: AnalysisResponse): Promise<void> {
     if (!this.db) await this.init();
-    const tx = this.db!.transaction(LOG_STORE, "readwrite");
-    tx.objectStore(LOG_STORE).put(log);
+    if (!hash) return;
+    const tx = this.db!.transaction(CACHE_STORE, "readwrite");
+    const data = { 
+      profileHash: hash, // This MUST exist because it is the keyPath
+      response, 
+      timestamp: Date.now() 
+    };
+    tx.objectStore(CACHE_STORE).put(data);
   }
 
-  public async getLogs(): Promise<AIAgentLog[]> {
+  public async getCache(hash: string): Promise<AnalysisResponse | null> {
     if (!this.db) await this.init();
+    if (!hash) return null;
     return new Promise((resolve) => {
-      const tx = this.db!.transaction(LOG_STORE, "readonly");
-      const req = tx.objectStore(LOG_STORE).getAll();
-      req.onsuccess = () => resolve(req.result);
+      const tx = this.db!.transaction(CACHE_STORE, "readonly");
+      const req = tx.objectStore(CACHE_STORE).get(hash);
+      req.onsuccess = () => resolve(req.result ? req.result.response : null);
+      req.onerror = () => resolve(null);
     });
   }
 
-  public async upsertScheme(scheme: Scheme): Promise<'INSERT' | 'UPDATE' | 'IGNORE'> {
+  public async clearCache(): Promise<void> {
     if (!this.db) await this.init();
-    const existing = await this.getScheme(scheme.yojana_name);
-    const coreData = { ...scheme, hash_signature: undefined, last_checked_date: undefined, scheme_status: undefined };
-    const newHash = btoa(unescape(encodeURIComponent(JSON.stringify(coreData))));
-    
-    if (!existing) {
-      await this.saveScheme({ ...scheme, hash_signature: newHash, last_checked_date: Date.now(), scheme_status: 'NEW' });
-      return 'INSERT';
-    }
-    if (existing.hash_signature !== newHash) {
-      await this.saveScheme({ ...scheme, hash_signature: newHash, last_checked_date: Date.now(), scheme_status: 'UPDATED' });
-      return 'UPDATE';
-    }
-    return 'IGNORE';
+    const tx = this.db!.transaction(CACHE_STORE, "readwrite");
+    tx.objectStore(CACHE_STORE).clear();
   }
 
-  private async getScheme(name: string): Promise<Scheme | null> {
-    const tx = this.db!.transaction(SCHEME_STORE, "readonly");
-    return new Promise((resolve) => {
-      const req = tx.objectStore(SCHEME_STORE).get(name);
-      req.onsuccess = () => resolve(req.result || null);
-    });
-  }
-
-  private async saveScheme(scheme: Scheme): Promise<void> {
-    const tx = this.db!.transaction(SCHEME_STORE, "readwrite");
-    tx.objectStore(SCHEME_STORE).put(scheme);
-  }
-
-  public async setSetting(key: string, value: any): Promise<void> {
+  public async saveUserSubmission(profile: UserProfile): Promise<void> {
     if (!this.db) await this.init();
-    const tx = this.db!.transaction(SETTINGS_STORE, "readwrite");
-    tx.objectStore(SETTINGS_STORE).put(value, key);
+    const tx = this.db!.transaction(USER_RECORDS_STORE, "readwrite");
+    tx.objectStore(USER_RECORDS_STORE).add(profile);
   }
 
   public async getSetting<T>(key: string): Promise<T | null> {
@@ -108,23 +90,15 @@ export class DBService {
       const tx = this.db!.transaction(SETTINGS_STORE, "readonly");
       const req = tx.objectStore(SETTINGS_STORE).get(key);
       req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => resolve(null);
     });
   }
 
-  // Persistent App Data (Profile, Last Analysis)
-  public async saveAppData(key: 'profile' | 'last_result', data: any): Promise<void> {
+  public async setSetting(key: string, value: any): Promise<void> {
     if (!this.db) await this.init();
-    const tx = this.db!.transaction(DATA_STORE, "readwrite");
-    tx.objectStore(DATA_STORE).put(data, key);
-  }
-
-  public async getAppData<T>(key: 'profile' | 'last_result'): Promise<T | null> {
-    if (!this.db) await this.init();
-    return new Promise((resolve) => {
-      const tx = this.db!.transaction(DATA_STORE, "readonly");
-      const req = tx.objectStore(DATA_STORE).get(key);
-      req.onsuccess = () => resolve(req.result || null);
-    });
+    const tx = this.db!.transaction(SETTINGS_STORE, "readwrite");
+    // put(value, key) because SETTINGS_STORE has no keyPath
+    tx.objectStore(SETTINGS_STORE).put(value, key);
   }
 
   public async getAllSchemes(): Promise<Scheme[]> {
@@ -133,7 +107,19 @@ export class DBService {
       const tx = this.db!.transaction(SCHEME_STORE, "readonly");
       const req = tx.objectStore(SCHEME_STORE).getAll();
       req.onsuccess = () => resolve(req.result);
+      req.onerror = () => resolve([]);
     });
+  }
+
+  public async upsertScheme(scheme: Scheme): Promise<void> {
+    if (!this.db) await this.init();
+    // Validate that the keyPath property exists to prevent IDB errors
+    if (!scheme || !scheme.yojana_name) {
+      console.warn("Skipping scheme save: missing yojana_name", scheme);
+      return;
+    }
+    const tx = this.db!.transaction(SCHEME_STORE, "readwrite");
+    tx.objectStore(SCHEME_STORE).put(scheme);
   }
 }
 
