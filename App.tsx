@@ -7,7 +7,7 @@ import {
   RURAL_URBAN, EDUCATION_LEVELS, INSTITUTION_TYPES, PENSION_STATUS
 } from './constants';
 import FormSection from './components/FormSection';
-import { analyzeEligibility } from './services/geminiService';
+import { analyzeEligibility, testApiConnection } from './services/geminiService';
 import { dbService } from './services/dbService';
 
 const StatusBadge: React.FC<{ status: EligibilityStatus }> = ({ status }) => {
@@ -31,7 +31,7 @@ const SchemesTable: React.FC<{ schemes: Scheme[] }> = ({ schemes }) => {
             <th className="p-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">योजना का नाम और सरकार</th>
             <th className="p-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">मुख्य लाभ</th>
             <th className="p-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">पात्रता स्थिति</th>
-            <th className="p-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">कार्य (Action)</th>
+            <th className="p-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">कार्य</th>
           </tr>
         </thead>
         <tbody>
@@ -63,26 +63,26 @@ const SchemesTable: React.FC<{ schemes: Scheme[] }> = ({ schemes }) => {
                   <td colSpan={4} className="p-8">
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-10 animate-slide-up">
                       <div className="space-y-4">
-                        <h4 className="text-[10px] font-black text-orange-600 uppercase tracking-widest">आवेदन कैसे करें (Roadmap)</h4>
+                        <h4 className="text-[10px] font-black text-orange-600 uppercase tracking-widest">आवेदन प्रक्रिया (Roadmap)</h4>
                         <div className="space-y-3 bg-white p-5 rounded-2xl border border-orange-100 shadow-sm">
                           <div className="flex gap-3">
                             <span className="w-5 h-5 rounded bg-orange-100 text-orange-600 flex items-center justify-center text-[10px] font-black">1</span>
                             <div>
                               <p className="text-[9px] font-black text-slate-400 uppercase">हस्ताक्षर</p>
-                              <p className="text-xs font-bold text-slate-800">{(scheme.signatures_required || []).join(", ")}</p>
+                              <p className="text-xs font-bold text-slate-800">{(scheme.signatures_required || []).join(", ") || "आवेदक"}</p>
                             </div>
                           </div>
                           <div className="flex gap-3">
                             <span className="w-5 h-5 rounded bg-orange-100 text-orange-600 flex items-center justify-center text-[10px] font-black">2</span>
                             <div>
                               <p className="text-[9px] font-black text-slate-400 uppercase">जमा केंद्र</p>
-                              <p className="text-xs font-bold text-slate-800">{scheme.submission_point || 'ई-मित्र केंद्र'}</p>
+                              <p className="text-xs font-bold text-slate-800">{scheme.submission_point || 'ई-मित्र (Rajasthan)'}</p>
                             </div>
                           </div>
                           <div className="flex gap-3">
                             <span className="w-5 h-5 rounded bg-orange-100 text-orange-600 flex items-center justify-center text-[10px] font-black">3</span>
                             <div>
-                              <p className="text-[9px] font-black text-slate-400 uppercase">प्रकार</p>
+                              <p className="text-[9px] font-black text-slate-400 uppercase">तरीका</p>
                               <p className="text-xs font-bold text-slate-800">{scheme.application_type || 'ऑनलाइन'}</p>
                             </div>
                           </div>
@@ -101,14 +101,12 @@ const SchemesTable: React.FC<{ schemes: Scheme[] }> = ({ schemes }) => {
                       </div>
 
                       <div className="space-y-4">
-                        <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">पात्रता का कारण</h4>
-                        <div className="bg-white p-5 rounded-2xl border border-slate-100 italic text-xs text-slate-500 font-bold leading-relaxed">
+                        <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">पात्रता और आवेदन लिंक</h4>
+                        <div className="bg-white p-5 rounded-2xl border border-slate-100 italic text-xs text-slate-500 font-bold leading-relaxed mb-4">
                           "{scheme.eligibility_reason_hindi}"
                         </div>
-                        <div className="pt-4 flex flex-col gap-3">
-                          <a href={scheme.official_pdf_link || "#"} target="_blank" rel="noreferrer" className="w-full py-3 bg-slate-900 text-white text-center rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-black">आधिकारिक पोर्टल</a>
-                          <p className="text-[9px] text-center text-slate-400 font-bold">स्रोत: {scheme.form_source || 'Govt Official Portal'}</p>
-                        </div>
+                        <a href={scheme.official_pdf_link || "#"} target="_blank" rel="noreferrer" className="block w-full py-3 bg-slate-900 text-white text-center rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-black">आधिकारिक पोर्टल पर जाएँ</a>
+                        <p className="text-[9px] text-center text-slate-400 font-bold uppercase tracking-tight">स्रोत: {scheme.form_source || 'Government Official Site'}</p>
                       </div>
                     </div>
                   </td>
@@ -130,6 +128,7 @@ const App: React.FC = () => {
   const [auth, setAuth] = useState<AuthState>({ isAuthenticated: false, user: null });
   const [loginForm, setLoginForm] = useState({ email: '', password: '' });
   const [apiKeys, setApiKeys] = useState({ gemini: '', groq: '' });
+  const [apiStatus, setApiStatus] = useState({ gemini: 'idle', groq: 'idle' });
   
   const INITIAL_PROFILE: UserProfile = {
     fullName: '', phone: '', gender: 'Female', dob: '1995-01-01', age: 30, marital_status: 'Married', 
@@ -162,16 +161,22 @@ const App: React.FC = () => {
       setResult(res);
     } catch (err: any) { 
       console.error(err);
-      alert(err.message || "खोज विफल रही। कृपया इंटरनेट और Admin में API Key जांचें।"); 
+      alert(err.message || "खोज विफल रही। Admin में अपनी API Keys और इंटरनेट की जाँच करें।"); 
     } finally {
       setLoading(false);
     }
   };
 
+  const checkApi = async (provider: 'gemini' | 'groq') => {
+    setApiStatus(prev => ({ ...prev, [provider]: 'loading' }));
+    const ok = await testApiConnection(provider, apiKeys[provider]);
+    setApiStatus(prev => ({ ...prev, [provider]: ok ? 'success' : 'error' }));
+  };
+
   const handleAdminAutoFill = () => {
     setProfile({
       ...INITIAL_PROFILE,
-      fullName: 'Anita Devi', age: 34, gender: 'Female', marital_status: 'Married',
+      fullName: 'Anita Devi Meena', age: 32, gender: 'Female', marital_status: 'Married',
       district: 'Banswara', is_tsp_area: 'Yes', category: 'ST',
       income: INCOME_SLABS[0], bpl: 'Yes', ration_card_type: 'BPL',
       is_farmer: 'Yes', jan_aadhar_status: 'Yes'
@@ -189,11 +194,11 @@ const App: React.FC = () => {
              <div className="w-10 h-10 bg-orange-600 rounded-2xl flex items-center justify-center text-xl shadow-lg ring-4 ring-orange-50">🇮🇳</div>
              <div>
                <h1 className="text-base font-black text-slate-800 leading-none">Sarkari Master Engine</h1>
-               <p className="text-[9px] font-black text-orange-600 uppercase tracking-widest mt-1">Live Search AI Verified (2024-25)</p>
+               <p className="text-[9px] font-black text-orange-600 uppercase tracking-widest mt-1">Dual AI Live Verification (2024-25)</p>
              </div>
           </div>
           <nav className="flex bg-slate-100 p-1 rounded-2xl gap-1">
-            <button onClick={() => setActiveTab('form')} className={`px-4 py-2 rounded-xl font-black text-[10px] uppercase transition-all ${activeTab === 'form' ? 'bg-white text-orange-600 shadow-sm' : 'text-slate-400'}`}>आवेदन फॉर्म</button>
+            <button onClick={() => setActiveTab('form')} className={`px-4 py-2 rounded-xl font-black text-[10px] uppercase transition-all ${activeTab === 'form' ? 'bg-white text-orange-600 shadow-sm' : 'text-slate-400'}`}>खोजें</button>
             <button onClick={() => setActiveTab('admin')} className={`px-4 py-2 rounded-xl font-black text-[10px] uppercase transition-all ${activeTab === 'admin' ? 'bg-white text-orange-600 shadow-sm' : 'text-slate-400'}`}>एडमिन</button>
           </nav>
         </div>
@@ -204,10 +209,14 @@ const App: React.FC = () => {
           <div className="space-y-8 animate-slide-up">
             {!result && !loading && (
               <form onSubmit={handleAnalyze} className="bg-white p-6 md:p-12 rounded-[3.5rem] shadow-2xl border border-slate-50 space-y-12">
-                <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+                <div className="flex flex-col sm:flex-row items-center justify-between gap-4 border-b border-slate-50 pb-6">
                   <div>
                     <h2 className="text-2xl font-black text-slate-800">पात्रता प्रोफाइल फॉर्म</h2>
-                    <p className="text-xs font-bold text-slate-400 mt-1">सरकारी वेबसाइटों से लाइव जानकारी प्राप्त करने के लिए विवरण भरें</p>
+                    <p className="text-xs font-bold text-slate-400 mt-1">सरकारी पोर्टल्स (india.gov.in & rajasthan.gov.in) से लाइव जांच</p>
+                  </div>
+                  <div className="flex gap-2">
+                    {apiKeys.gemini && <span className="px-2 py-1 bg-green-50 text-green-600 rounded-lg text-[8px] font-black uppercase">Gemini Connected</span>}
+                    {apiKeys.groq && <span className="px-2 py-1 bg-blue-50 text-blue-600 rounded-lg text-[8px] font-black uppercase">Groq Verified</span>}
                   </div>
                 </div>
 
@@ -246,70 +255,45 @@ const App: React.FC = () => {
                     </div>
                   </FormSection>
 
-                  <FormSection title="आर्थिक जानकारी" icon="💰">
+                  <FormSection title="आर्थिक और किसान" icon="🚜">
                     <div className="space-y-2">
-                      <label className="block text-[11px] font-black text-slate-500 uppercase ml-2">सालाना आय</label>
-                      <select value={profile.income} onChange={e => setProfile({...profile, income: e.target.value})} className="w-full p-4 bg-slate-50 rounded-2xl font-bold text-xs ring-1 ring-slate-100">{INCOME_SLABS.map(s => <option key={s}>{s}</option>)}</select>
-                    </div>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <label className="block text-[11px] font-black text-slate-500 uppercase ml-2">राशन कार्ड</label>
+                      <label className="block text-[11px] font-black text-slate-500 uppercase ml-2">आय और राशन</label>
+                      <div className="grid grid-cols-2 gap-4">
+                        <select value={profile.income} onChange={e => setProfile({...profile, income: e.target.value})} className="w-full p-4 bg-slate-50 rounded-2xl font-bold text-xs ring-1 ring-slate-100">{INCOME_SLABS.map(s => <option key={s}>{s}</option>)}</select>
                         <select value={profile.ration_card_type} onChange={e => setProfile({...profile, ration_card_type: e.target.value})} className="w-full p-4 bg-slate-50 rounded-2xl font-bold text-xs ring-1 ring-slate-100">{RATION_CARD_TYPES.map(r => <option key={r}>{r}</option>)}</select>
                       </div>
-                      <div className="space-y-2">
-                        <label className="block text-[11px] font-black text-slate-500 uppercase ml-2">BPL कार्ड?</label>
-                        <select value={profile.bpl} onChange={e => setProfile({...profile, bpl: e.target.value})} className="w-full p-4 bg-slate-50 rounded-2xl font-bold text-xs ring-1 ring-slate-100">{YES_NO.map(y => <option key={y}>{y}</option>)}</select>
-                      </div>
-                    </div>
-                  </FormSection>
-
-                  <FormSection title="शिक्षा और स्वास्थ्य" icon="🎓">
-                    <div className="space-y-2">
-                      <label className="block text-[11px] font-black text-slate-500 uppercase ml-2">शिक्षा</label>
-                      <select value={profile.education} onChange={e => setProfile({...profile, education: e.target.value})} className="w-full p-4 bg-slate-50 rounded-2xl font-bold text-xs ring-1 ring-slate-100">{EDUCATION_LEVELS.map(e => <option key={e}>{e}</option>)}</select>
                     </div>
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2">
-                        <label className="block text-[11px] font-black text-slate-500 uppercase ml-2">गर्भवती?</label>
-                        <select value={profile.pregnant} onChange={e => setProfile({...profile, pregnant: e.target.value})} className="w-full p-4 bg-slate-50 rounded-2xl font-bold text-xs ring-1 ring-slate-100">{YES_NO.map(y => <option key={y}>{y}</option>)}</select>
+                        <label className="block text-[11px] font-black text-slate-500 uppercase ml-2">किसान?</label>
+                        <select value={profile.is_farmer} onChange={e => setProfile({...profile, is_farmer: e.target.value})} className="w-full p-4 bg-slate-50 rounded-2xl font-bold text-xs ring-1 ring-slate-100">{YES_NO.map(y => <option key={y}>{y}</option>)}</select>
                       </div>
                       <div className="space-y-2">
-                        <label className="block text-[11px] font-black text-slate-500 uppercase ml-2">दिव्यांग?</label>
-                        <select value={profile.disability} onChange={e => setProfile({...profile, disability: e.target.value})} className="w-full p-4 bg-slate-50 rounded-2xl font-bold text-xs ring-1 ring-slate-100">{YES_NO.map(y => <option key={y}>{y}</option>)}</select>
-                      </div>
-                    </div>
-                  </FormSection>
-
-                  <FormSection title="व्यवसाय और किसान" icon="🚜">
-                    <div className="space-y-2">
-                      <label className="block text-[11px] font-black text-slate-500 uppercase ml-2">किसान?</label>
-                      <select value={profile.is_farmer} onChange={e => setProfile({...profile, is_farmer: e.target.value})} className="w-full p-4 bg-slate-50 rounded-2xl font-bold text-xs ring-1 ring-slate-100">{YES_NO.map(y => <option key={y}>{y}</option>)}</select>
-                    </div>
-                    <div className="space-y-2">
-                      <label className="block text-[11px] font-black text-slate-500 uppercase ml-2">आईडी</label>
-                      <div className="grid grid-cols-2 gap-4">
+                        <label className="block text-[11px] font-black text-slate-500 uppercase ml-2">जन-आधार?</label>
                         <select value={profile.jan_aadhar_status} onChange={e => setProfile({...profile, jan_aadhar_status: e.target.value})} className="w-full p-4 bg-slate-50 rounded-2xl font-bold text-xs ring-1 ring-slate-100">{YES_NO.map(y => <option key={y}>{y}</option>)}</select>
-                        <p className="text-[8px] font-bold text-slate-400 self-center">जन-आधार कार्ड</p>
                       </div>
                     </div>
                   </FormSection>
                 </div>
 
                 <div className="pt-6">
-                  <button type="submit" className="w-full py-6 bg-orange-600 text-white font-black rounded-3xl shadow-xl hover:bg-orange-700 active:scale-95 transition-all text-sm md:text-base">सरकारी पोर्टल से लाइव खोजें 🚀</button>
+                  <button type="submit" className="w-full py-6 bg-orange-600 text-white font-black rounded-3xl shadow-xl hover:bg-orange-700 active:scale-95 transition-all text-sm md:text-base">लाइव सरकारी डेटा खोजें 🚀</button>
                 </div>
               </form>
             )}
 
             {loading && (
-              <div className="py-24 text-center space-y-8 flex flex-col items-center justify-center">
+              <div className="py-24 text-center space-y-10 flex flex-col items-center justify-center">
                 <div className="relative">
-                  <div className="w-24 h-24 border-[10px] border-orange-100 border-t-orange-600 rounded-full animate-spin shadow-inner"></div>
-                  <div className="absolute inset-0 flex items-center justify-center text-xs font-black text-orange-600">AI</div>
+                  <div className="w-28 h-28 border-[12px] border-orange-100 border-t-orange-600 rounded-full animate-spin"></div>
+                  <div className="absolute inset-0 flex items-center justify-center text-[10px] font-black text-orange-600 uppercase">Dual AI</div>
                 </div>
-                <div className="space-y-2">
-                  <p className="font-black text-slate-800 text-xl">सरकारी पोर्टल्स (Rajasthan & India) की लाइव जांच हो रही है...</p>
-                  <p className="font-bold text-slate-400 uppercase text-[10px] tracking-[0.3em]">Searching india.gov.in & rajasthan.gov.in</p>
+                <div className="space-y-3">
+                  <p className="font-black text-slate-800 text-2xl">वेबसाइटों की लाइव जांच जारी है...</p>
+                  <div className="flex justify-center gap-4">
+                    <span className="flex items-center gap-2 text-[9px] font-black text-slate-400 uppercase tracking-widest"><span className="w-2 h-2 bg-orange-500 rounded-full animate-pulse"></span> Gemini Searching</span>
+                    <span className="flex items-center gap-2 text-[9px] font-black text-slate-400 uppercase tracking-widest"><span className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></span> Groq Auditing</span>
+                  </div>
                 </div>
               </div>
             )}
@@ -317,15 +301,15 @@ const App: React.FC = () => {
             {result && !loading && (
               <div className="space-y-8 animate-slide-up mb-12">
                 <div className="bg-white p-6 md:p-12 rounded-[3.5rem] shadow-2xl border border-slate-50">
-                   <div className="flex flex-col sm:flex-row justify-between items-center mb-10 gap-4">
+                   <div className="flex flex-col sm:flex-row justify-between items-center mb-12 gap-4">
                      <div>
-                       <h2 className="text-2xl font-black text-slate-800">लाइव खोज परिणाम ({result.eligible_schemes.length})</h2>
-                       <p className="text-xs font-bold text-slate-400 mt-1">आपकी पात्रता के अनुसार वास्तविक और सक्रिय योजनाएं</p>
+                       <h2 className="text-2xl font-black text-slate-800">खोज परिणाम ({result.eligible_schemes.length})</h2>
+                       <p className="text-xs font-bold text-slate-400 mt-1">Dual AI (Gemini & Groq) द्वारा सत्यापित सरकारी योजनाएं</p>
                      </div>
                      <button onClick={() => setResult(null)} className="px-8 py-3 bg-slate-100 text-slate-500 font-black rounded-2xl text-[10px] uppercase hover:bg-orange-50 hover:text-orange-600 transition-all">नई खोज</button>
                    </div>
                    
-                   <div className="bg-orange-50/50 p-6 md:p-8 rounded-[2.5rem] mb-10 text-sm font-bold text-slate-700 italic border border-orange-100/50 whitespace-pre-wrap shadow-inner leading-relaxed">
+                   <div className="bg-orange-50/50 p-8 rounded-[2.5rem] mb-12 text-sm font-bold text-slate-700 border border-orange-100 whitespace-pre-wrap shadow-inner leading-relaxed">
                       {result.hindiContent}
                    </div>
 
@@ -334,7 +318,7 @@ const App: React.FC = () => {
                    ) : (
                      <div className="text-center py-24 bg-slate-50 rounded-[3rem] border-2 border-dashed border-slate-200">
                        <p className="text-xl font-black text-slate-300">कोई डेटा नहीं मिला।</p>
-                       <p className="text-xs font-bold text-slate-400 mt-2">कृपया Admin में अपनी API Key जांचें या विवरण बदलें।</p>
+                       <p className="text-xs font-bold text-slate-400 mt-2">API Keys या पात्रता विवरण की जाँच करें।</p>
                      </div>
                    )}
                 </div>
@@ -344,31 +328,55 @@ const App: React.FC = () => {
         )}
 
         {activeTab === 'admin' && (
-          <div className="max-w-xl mx-auto space-y-8 pb-12">
+          <div className="max-w-2xl mx-auto space-y-8 pb-12 animate-slide-up">
             {!auth.isAuthenticated ? (
                <div className="bg-white p-12 rounded-[3.5rem] shadow-2xl text-center space-y-8 border border-slate-50">
-                  <h2 className="text-2xl font-black text-slate-800">Admin Login</h2>
+                  <h2 className="text-2xl font-black text-slate-800">Admin Control</h2>
                   <form onSubmit={e => {
                     e.preventDefault();
                     if(loginForm.email === 'yadavnagji@gmail.com' && loginForm.password === '123456') setAuth({ isAuthenticated: true, user: 'Nagji' });
                     else alert("Access Denied");
                   }} className="space-y-4">
-                    <input type="email" required onChange={e => setLoginForm({...loginForm, email: e.target.value})} className="w-full p-4 bg-slate-50 rounded-2xl font-bold text-xs ring-1 ring-slate-100" placeholder="Admin Email" />
-                    <input type="password" required onChange={e => setLoginForm({...loginForm, password: e.target.value})} className="w-full p-4 bg-slate-50 rounded-2xl font-bold text-xs ring-1 ring-slate-100" placeholder="Password" />
-                    <button type="submit" className="w-full py-5 bg-orange-600 text-white font-black rounded-2xl shadow-xl">Login</button>
+                    <input type="email" required onChange={e => setLoginForm({...loginForm, email: e.target.value})} className="w-full p-5 bg-slate-50 rounded-2xl font-bold text-xs ring-1 ring-slate-100" placeholder="Admin Email" />
+                    <input type="password" required onChange={e => setLoginForm({...loginForm, password: e.target.value})} className="w-full p-5 bg-slate-50 rounded-2xl font-bold text-xs ring-1 ring-slate-100" placeholder="Password" />
+                    <button type="submit" className="w-full py-5 bg-orange-600 text-white font-black rounded-2xl shadow-xl">एडमिन लॉगिन</button>
                   </form>
                </div>
             ) : (
-              <div className="bg-white p-10 rounded-[3.5rem] shadow-2xl space-y-12 border border-slate-50">
-                <button onClick={handleAdminAutoFill} className="w-full py-6 bg-orange-600 text-white font-black rounded-3xl shadow-lg">🚀 Auto-Fill Realistic Data</button>
-                <section className="space-y-6 pt-8 border-t border-slate-100">
-                  <h3 className="text-xs font-black uppercase text-slate-400">API Settings</h3>
-                  <div className="space-y-4">
-                     <div className="space-y-1">
-                        <label className="text-[10px] font-black text-slate-400 uppercase ml-2">Gemini Key (Required for Search)</label>
-                        <input type="password" value={apiKeys.gemini} onChange={e => setApiKeys({...apiKeys, gemini: e.target.value})} className="w-full p-4 bg-slate-50 rounded-2xl font-mono text-[11px] ring-1 ring-slate-200" placeholder="Gemini Key" />
+              <div className="bg-white p-12 rounded-[3.5rem] shadow-2xl space-y-12 border border-slate-50">
+                <button onClick={handleAdminAutoFill} className="w-full py-6 bg-orange-600 text-white font-black rounded-3xl shadow-lg hover:bg-orange-700 transition-all">🚀 ऑटो-फिल (Test Realistic Data)</button>
+                
+                <section className="space-y-8 pt-8 border-t border-slate-100">
+                  <h3 className="text-xs font-black uppercase text-slate-400 tracking-[0.2em]">API Verification Control</h3>
+                  
+                  <div className="space-y-6">
+                     <div className="p-6 bg-slate-50 rounded-3xl space-y-4 border border-slate-100">
+                        <div className="flex justify-between items-center">
+                          <label className="text-[10px] font-black text-slate-600 uppercase tracking-widest">Gemini 3 Pro (Live Search)</label>
+                          <span className={`px-2 py-1 rounded text-[8px] font-black uppercase ${apiStatus.gemini === 'success' ? 'bg-green-100 text-green-700' : apiStatus.gemini === 'error' ? 'bg-red-100 text-red-700' : 'bg-slate-200 text-slate-400'}`}>
+                            {apiStatus.gemini === 'loading' ? 'Checking...' : apiStatus.gemini.toUpperCase()}
+                          </span>
+                        </div>
+                        <div className="flex gap-2">
+                          <input type="password" value={apiKeys.gemini} onChange={e => setApiKeys({...apiKeys, gemini: e.target.value})} className="flex-1 p-4 bg-white rounded-xl font-mono text-[11px] ring-1 ring-slate-200" placeholder="Enter Gemini API Key" />
+                          <button onClick={() => checkApi('gemini')} className="px-4 bg-white border border-slate-200 rounded-xl text-[9px] font-black uppercase hover:bg-orange-50 transition-all">Verify</button>
+                        </div>
                      </div>
-                     <button onClick={() => dbService.setSetting('api_keys', apiKeys).then(() => alert("Settings Saved!"))} className="w-full py-4 bg-slate-900 text-white font-black rounded-2xl shadow-xl hover:bg-black transition-all">Save Keys</button>
+
+                     <div className="p-6 bg-slate-50 rounded-3xl space-y-4 border border-slate-100">
+                        <div className="flex justify-between items-center">
+                          <label className="text-[10px] font-black text-slate-600 uppercase tracking-widest">Groq Llama-3 (Auditor AI)</label>
+                          <span className={`px-2 py-1 rounded text-[8px] font-black uppercase ${apiStatus.groq === 'success' ? 'bg-green-100 text-green-700' : apiStatus.groq === 'error' ? 'bg-red-100 text-red-700' : 'bg-slate-200 text-slate-400'}`}>
+                            {apiStatus.groq === 'loading' ? 'Checking...' : apiStatus.groq.toUpperCase()}
+                          </span>
+                        </div>
+                        <div className="flex gap-2">
+                          <input type="password" value={apiKeys.groq} onChange={e => setApiKeys({...apiKeys, groq: e.target.value})} className="flex-1 p-4 bg-white rounded-xl font-mono text-[11px] ring-1 ring-slate-200" placeholder="Enter Groq API Key (gsk_...)" />
+                          <button onClick={() => checkApi('groq')} className="px-4 bg-white border border-slate-200 rounded-xl text-[9px] font-black uppercase hover:bg-orange-50 transition-all">Verify</button>
+                        </div>
+                     </div>
+
+                     <button onClick={() => dbService.setSetting('api_keys', apiKeys).then(() => alert("All Keys Saved Successfully!"))} className="w-full py-5 bg-slate-900 text-white font-black rounded-2xl shadow-xl hover:bg-black transition-all">Save Permanent Configuration</button>
                   </div>
                 </section>
               </div>
@@ -378,7 +386,7 @@ const App: React.FC = () => {
       </main>
 
       <footer className="py-8 text-center bg-white border-t border-slate-100 shrink-0 mt-auto w-full">
-        <p className="opacity-30 text-[9px] font-black uppercase tracking-[0.4em]">Sarkari Master Engine • Live Web Grounding (2024-2025)</p>
+        <p className="opacity-30 text-[9px] font-black uppercase tracking-[0.4em]">Sarkari Master Engine • Dual AI Integrated System • Nagji Yadav</p>
       </footer>
     </div>
   );
