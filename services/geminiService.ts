@@ -48,11 +48,10 @@ function robustJsonParse(text: string): any {
 }
 
 /**
- * Test Gemini API connection.
+ * Test Gemini API connection using the pre-configured process.env.API_KEY.
  */
 export async function testApiConnection(): Promise<boolean> {
   try {
-    // Guideline: Always use { apiKey: process.env.API_KEY } directly
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
@@ -69,7 +68,6 @@ export async function testApiConnection(): Promise<boolean> {
  * Analyze profile with Gemini 3 Pro and extract grounding metadata.
  */
 async function analyzeWithGemini(profile: UserProfile): Promise<AnalysisResponse> {
-  // Guideline: Always use { apiKey: process.env.API_KEY } directly
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   const prompt = `उपयोगकर्ता प्रोफाइल डेटा: ${JSON.stringify(profile)}.
   कृपया 20 योजनाओं की सूची दें। समावेशिता सुनिश्चित करें। 
@@ -87,11 +85,8 @@ async function analyzeWithGemini(profile: UserProfile): Promise<AnalysisResponse
     }
   });
   
-  // Guideline: Use .text property directly
   const raw = res.text || "";
   const aiSchemes = robustJsonParse(raw) || [];
-  
-  // Extract grounding metadata for transparency as per guidelines
   const groundingSources = res.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
 
   if (aiSchemes.length > 0) {
@@ -111,48 +106,37 @@ export async function analyzeEligibility(profile: UserProfile, isDummy: boolean)
   if (cached) return cached;
 
   const dbSchemes = await dbService.getAllSchemes();
-  
   const filteredDb = dbSchemes.filter(s => {
-    // Basic safety filters
     if (s.government === 'Rajasthan Govt' && profile.state !== 'Rajasthan') return false;
-    
-    // Gender safety filter
     const isFemaleSpecific = s.yojana_name.includes("महिला") || s.yojana_name.includes("छात्रा") || s.category?.includes("Women");
     if (isFemaleSpecific && profile.gender === 'Male') return false;
-
     return true;
   });
 
-  // Guideline: Exclusively use process.env.API_KEY
-  if (process.env.API_KEY) {
-    try {
-      const aiResult = await analyzeWithGemini(profile);
-      const seen = new Set(filteredDb.map(s => s.yojana_name));
-      const combined = [...filteredDb];
-      
-      if (aiResult.eligible_schemes && aiResult.eligible_schemes.length > 0) {
-        aiResult.eligible_schemes.forEach(s => {
-          if (!seen.has(s.yojana_name)) {
-            combined.push(s);
-            seen.add(s.yojana_name);
-          }
-        });
-      }
-      
-      const finalResult = { ...aiResult, eligible_schemes: combined };
-      await dbService.saveCache(profileHash, finalResult);
-      return finalResult;
-    } catch (e) {
-      console.warn("AI logic failed, falling back to database results", e);
-      return { 
-        hindiContent: "डेटाबेस से प्राप्त परिणाम (AI त्रुटि): आपकी प्रोफाइल के लिए उपलब्ध प्रमुख योजनाएं नीचे दी गई हैं।", 
-        eligible_schemes: filteredDb 
-      };
+  try {
+    // Attempt AI analysis directly using the pre-configured environment variable
+    const aiResult = await analyzeWithGemini(profile);
+    const seen = new Set(filteredDb.map(s => s.yojana_name));
+    const combined = [...filteredDb];
+    
+    if (aiResult.eligible_schemes && aiResult.eligible_schemes.length > 0) {
+      aiResult.eligible_schemes.forEach(s => {
+        if (!seen.has(s.yojana_name)) {
+          combined.push(s);
+          seen.add(s.yojana_name);
+        }
+      });
     }
+    
+    const finalResult = { ...aiResult, eligible_schemes: combined };
+    await dbService.saveCache(profileHash, finalResult);
+    return finalResult;
+  } catch (e) {
+    console.error("AI analysis call failed:", e);
+    // Silent fallback to database results on any error (including missing/invalid key)
+    return { 
+      hindiContent: "डेटाबेस से प्राप्त परिणाम: आपकी प्रोफाइल के लिए उपलब्ध प्रमुख योजनाएं नीचे दी गई हैं।", 
+      eligible_schemes: filteredDb 
+    };
   }
-
-  return { 
-    hindiContent: "खोज परिणाम: आपकी प्रोफाइल के आधार पर स्थानीय डेटाबेस से महत्वपूर्ण योजनाएं नीचे दी गई हैं। (नोट: अधिक सटीक परिणामों के लिए AI सक्रियण की प्रतीक्षा है)", 
-    eligible_schemes: filteredDb 
-  };
 }

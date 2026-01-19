@@ -71,7 +71,7 @@ const translations = {
     destitute: 'निराश्रित/असहाय?',
     // Features page
     fTitle: 'पोर्टल की प्रमुख विशेषताएँ',
-    fDesc: 'AI-संचालित तकनीक और हाइब्रिड डेटाबेस खोज।',
+    fDesc: 'AI-संचालित तकनीक और हाइब्रित डेटाबेस खोज।',
     f1: 'हाइब्रिड खोज प्रणाली',
     f1d: 'पहले स्थानीय डेटाबेस में खोज और फिर अद्यतन जानकारी के लिए लाइव AI का उपयोग।',
     f2: 'बीमा एवं बैंक योजनाएं',
@@ -385,7 +385,7 @@ const App: React.FC = () => {
                       <div className="space-y-1"><label className="text-[9px] font-black text-slate-400 uppercase tracking-widest px-1">{t.bankDbt}</label><select value={profile.bank_account_dbt} onChange={e => setProfile({...profile, bank_account_dbt: e.target.value})} className="w-full p-4 bg-slate-50 rounded-2xl font-bold text-xs ring-1 ring-slate-100">{YES_NO.map(y => <option key={y}>{y}</option>)}</select></div>
                     </div>
                     <div className="space-y-1"><label className="text-[9px] font-black text-slate-400 uppercase tracking-widest px-1">{t.phone}</label><input type="tel" value={profile.phone} onChange={e => setProfile({...profile, phone: e.target.value})} className="w-full p-4 bg-slate-50 rounded-2xl font-bold text-xs ring-1 ring-slate-100" placeholder={t.phone} /></div>
-                  </Section>
+                  </FormSection>
 
                 </div>
 
