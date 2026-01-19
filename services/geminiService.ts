@@ -1,35 +1,27 @@
 
-import { GoogleGenAI } from "@google/genai";
 import { UserProfile, AnalysisResponse, Scheme } from "../types";
 import { dbService } from "./dbService";
 
 const SYSTEM_INSTRUCTION = `आप भारत सरकार और राजस्थान सरकार की योजनाओं के विशेषज्ञ विश्लेषक हैं। 
 
-पात्रता विश्लेषण नियम (Accuracy & Inclusivity Rules):
-1. समावेशी दृष्टिकोण (Inclusivity): यदि उपयोगकर्ता किसी योजना की 80% शर्तें पूरी करता है, तो उसे 'CONDITIONAL' के रूप में दिखाएं और बताएं कि बाकी 20% शर्तें कैसे पूरी की जा सकती हैं।
-2. सशर्त पात्रता (Conditional Eligibility): "सशर्त पात्र" (Conditional) श्रेणी का उपयोग उन योजनाओं के लिए करें जहाँ लाभ किसी विशेष घटना पर निर्भर है।
-3. प्रोफाइल मिलान: उपयोगकर्ता के 30+ मापदंडों का उपयोग करें। डूंगरपुर, बांसवाड़ा जैसे जिलों के लिए TSP लाभों को शामिल करें।
-4. योजनाओं का कोटा: कम से कम 15-20 योजनाओं की विस्तृत सूची दें। 
+पात्रता विश्लेषण नियम (Strict Selection Rules):
+1. केवल पात्र योजनाएं (ELIGIBLE): उन योजनाओं की सूची दें जिनके लिए उपयोगकर्ता 100% पात्र है।
+2. केवल 5 सशर्त योजनाएं (CONDITIONAL): ऐसी ठीक 5 योजनाएं चुनें जहाँ उपयोगकर्ता 80% शर्तें पूरी करता है, और बताएं कि बाकी 20% (जैसे कोई सर्टिफिकेट) कैसे पूरा किया जा सकता है।
+3. डेटाबेस सीमा: अनावश्यक रूप से पूरी सूची न दिखाएं। केवल वे ही दिखाएं जो ऊपर दी गई शर्तों पर खरी उतरती हों।
+4. प्रोफाइल मिलान: उपयोगकर्ता के 30+ मापदंडों का उपयोग करें। 
 5. भाषा और प्रारूप: सारा विवरण शुद्ध हिंदी में हो। परिणाम अनिवार्य रूप से JSON ऑब्जेक्ट में 'eligible_schemes' ऐरे के साथ हो।
 
-योजना ऑब्जेक्ट में निम्नलिखित फील्ड अनिवार्य हैं:
-- yojana_name, government, category, short_purpose_hindi, detailed_benefits, eligibility_criteria (array), eligibility_status ('ELIGIBLE' | 'NOT_ELIGIBLE' | 'CONDITIONAL'), eligibility_reason_hindi, required_documents (array), form_source, application_type, signatures_required (array), submission_point, official_pdf_link, scheme_status.
-
-JSON को ---JSON_START--- और ---JSON_END--- के बीच रखें।`;
+JSON प्रारूप में ही उत्तर दें।`;
 
 function robustJsonParse(text: string): any {
   if (!text) return null;
   try {
-    const tagged = text.match(/---JSON_START---([\s\S]*?)---JSON_END---/);
-    if (tagged) {
-      const parsed = JSON.parse(tagged[1].trim());
-      return parsed.eligible_schemes || (Array.isArray(parsed) ? parsed : null);
-    }
     const md = text.match(/```json\s*([\s\S]*?)\s*```/i);
     if (md) {
       const parsed = JSON.parse(md[1].trim());
       return parsed.eligible_schemes || (Array.isArray(parsed) ? parsed : null);
     }
+    
     const startIdx = Math.min(
       text.indexOf('{') === -1 ? Infinity : text.indexOf('{'),
       text.indexOf('[') === -1 ? Infinity : text.indexOf('[')
@@ -42,61 +34,59 @@ function robustJsonParse(text: string): any {
       return parsed.eligible_schemes || (Array.isArray(parsed) ? parsed : null);
     }
   } catch (e) {
-    console.error("AI JSON Parse Error:", e);
+    console.error("Groq JSON Parse Error:", e);
   }
   return null;
 }
 
 /**
- * Test Gemini API connection using the pre-configured process.env.API_KEY.
+ * Fetch from Groq API as requested by the user.
  */
-export async function testApiConnection(): Promise<boolean> {
-  try {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-    const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
-      contents: 'test connection, respond "ok"',
-    });
-    return !!response.text;
-  } catch (e) { 
-    console.error("Gemini connection check failed:", e);
-    return false; 
+async function analyzeWithGroq(profile: UserProfile): Promise<AnalysisResponse> {
+  const apiKey = process.env.API_KEY || "";
+  
+  if (!apiKey || apiKey === "") {
+    throw new Error("API Key (Groq) is missing in the environment.");
   }
-}
 
-/**
- * Analyze profile with Gemini 3 Pro and extract grounding metadata.
- */
-async function analyzeWithGemini(profile: UserProfile): Promise<AnalysisResponse> {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   const prompt = `उपयोगकर्ता प्रोफाइल डेटा: ${JSON.stringify(profile)}.
-  कृपया 20 योजनाओं की सूची दें। समावेशिता सुनिश्चित करें। 
-  सशर्त पात्र (Conditional) योजनाओं को स्पष्ट तर्क के साथ जोड़ें। 
-  बीमा योजनाओं को केवल 2-3 तक रखें। 
-  विशेष रूप से राजस्थान के मेधावी स्नातक छात्रों और ग्रामीण महिलाओं के लिए योजनाओं पर ध्यान दें।`;
-  
-  const res = await ai.models.generateContent({
-    model: 'gemini-3-pro-preview',
-    contents: prompt,
-    config: { 
-      systemInstruction: SYSTEM_INSTRUCTION, 
-      tools: [{ googleSearch: {} }], 
-      temperature: 0.8 
-    }
+  नियम: उपयोगकर्ता के लिए जो 'ELIGIBLE' हैं वे दिखाएं और ठीक 5 ऐसी 'CONDITIONAL' योजनाएं दिखाएं जो पात्रता के करीब हों। 
+  20 से ज्यादा परिणाम न दें। शुद्ध हिंदी का उपयोग करें।`;
+
+  const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${apiKey}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      model: "llama-3.3-70b-versatile",
+      messages: [
+        { role: "system", content: SYSTEM_INSTRUCTION },
+        { role: "user", content: prompt }
+      ],
+      temperature: 0.6,
+      max_tokens: 4096,
+      response_format: { type: "json_object" }
+    })
   });
-  
-  const raw = res.text || "";
+
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => ({}));
+    throw new Error(`Groq API Status ${response.status}: ${errorBody.error?.message || response.statusText}`);
+  }
+
+  const data = await response.json();
+  const raw = data.choices[0]?.message?.content || "";
   const aiSchemes = robustJsonParse(raw) || [];
-  const groundingSources = res.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
 
   if (aiSchemes.length > 0) {
     aiSchemes.forEach((s: Scheme) => dbService.upsertScheme(s));
   }
 
   return {
-    hindiContent: raw.split(/---JSON_START---|```json|\[|\{/)[0].trim() || "यहाँ आपकी प्रोफाइल के आधार पर सटीक विश्लेषण दिया गया है:",
+    hindiContent: "Groq AI द्वारा विश्लेषण पूर्ण। हमने केवल वही योजनाएं चुनी हैं जिनके लिए आप पात्र हैं या थोड़े प्रयास से पात्र हो सकते हैं।",
     eligible_schemes: aiSchemes,
-    groundingSources,
   };
 }
 
@@ -105,38 +95,61 @@ export async function analyzeEligibility(profile: UserProfile, isDummy: boolean)
   const cached = await dbService.getCache(profileHash);
   if (cached) return cached;
 
-  const dbSchemes = await dbService.getAllSchemes();
-  const filteredDb = dbSchemes.filter(s => {
-    if (s.government === 'Rajasthan Govt' && profile.state !== 'Rajasthan') return false;
-    const isFemaleSpecific = s.yojana_name.includes("महिला") || s.yojana_name.includes("छात्रा") || s.category?.includes("Women");
-    if (isFemaleSpecific && profile.gender === 'Male') return false;
-    return true;
-  });
-
   try {
-    // Attempt AI analysis directly using the pre-configured environment variable
-    const aiResult = await analyzeWithGemini(profile);
-    const seen = new Set(filteredDb.map(s => s.yojana_name));
-    const combined = [...filteredDb];
+    // Rely primarily on Groq AI for dynamic eligibility determination based on profile
+    const aiResult = await analyzeWithGroq(profile);
     
-    if (aiResult.eligible_schemes && aiResult.eligible_schemes.length > 0) {
-      aiResult.eligible_schemes.forEach(s => {
-        if (!seen.has(s.yojana_name)) {
-          combined.push(s);
-          seen.add(s.yojana_name);
-        }
-      });
-    }
+    const rawSchemes = aiResult.eligible_schemes || [];
     
-    const finalResult = { ...aiResult, eligible_schemes: combined };
+    // Strict Filtering:
+    // 1. All ELIGIBLE schemes
+    // 2. Limit to exactly 5 CONDITIONAL schemes (if more exist)
+    const eligible = rawSchemes.filter(s => s.eligibility_status === 'ELIGIBLE');
+    const conditional = rawSchemes.filter(s => s.eligibility_status === 'CONDITIONAL').slice(0, 5);
+    
+    const finalSchemesList = [...eligible, ...conditional];
+    
+    const finalResult = { 
+      ...aiResult, 
+      eligible_schemes: finalSchemesList 
+    };
+    
     await dbService.saveCache(profileHash, finalResult);
     return finalResult;
   } catch (e) {
-    console.error("AI analysis call failed:", e);
-    // Silent fallback to database results on any error (including missing/invalid key)
+    console.error("AI Analysis Failed:", e);
+    // On failure, only show a subset of DB schemes to prevent showing 'everything'
+    const dbSchemes = await dbService.getAllSchemes();
+    const filteredDb = dbSchemes.filter(s => {
+      if (s.government === 'Rajasthan Govt' && profile.state !== 'Rajasthan') return false;
+      const isFemaleSpecific = s.yojana_name.includes("महिला") || s.yojana_name.includes("छात्रा") || s.category?.includes("Women");
+      if (isFemaleSpecific && profile.gender === 'Male') return false;
+      return true;
+    }).slice(0, 8); // Keep fallback list minimal
+
     return { 
-      hindiContent: "डेटाबेस से प्राप्त परिणाम: आपकी प्रोफाइल के लिए उपलब्ध प्रमुख योजनाएं नीचे दी गई हैं।", 
+      hindiContent: "डेटाबेस से प्राप्त सीमित परिणाम: AI सेवा वर्तमान में अनुपलब्ध है, आपकी प्रोफाइल के अनुसार मुख्य योजनाएं यहाँ हैं।", 
       eligible_schemes: filteredDb 
     };
+  }
+}
+
+export async function testApiConnection(): Promise<boolean> {
+  try {
+    const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${process.env.API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: "llama-3.3-70b-versatile",
+        messages: [{ role: "user", content: "hi" }],
+        max_tokens: 5
+      })
+    });
+    return res.ok;
+  } catch (e) {
+    return false;
   }
 }
