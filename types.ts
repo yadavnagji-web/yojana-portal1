@@ -14,7 +14,7 @@ export interface Scheme {
   
   // Application Process Guidance (MANDATORY)
   form_source: string; // e.g., "e-Mitra Portal", "Jan-Aadhar Website"
-  application_type: 'Online' | 'Offline' | 'Both';
+  application_type: 'Online' | 'Offline' | 'Both' | 'Automatic';
   signatures_required: string[]; // e.g., ["Sarpanch", "Patwari", "Applicant"]
   submission_point: string; // e.g., "Gram Panchayat", "Tehsil Office"
   official_pdf_link: string;

@@ -385,7 +385,7 @@ const App: React.FC = () => {
                       <div className="space-y-1"><label className="text-[9px] font-black text-slate-400 uppercase tracking-widest px-1">{t.bankDbt}</label><select value={profile.bank_account_dbt} onChange={e => setProfile({...profile, bank_account_dbt: e.target.value})} className="w-full p-4 bg-slate-50 rounded-2xl font-bold text-xs ring-1 ring-slate-100">{YES_NO.map(y => <option key={y}>{y}</option>)}</select></div>
                     </div>
                     <div className="space-y-1"><label className="text-[9px] font-black text-slate-400 uppercase tracking-widest px-1">{t.phone}</label><input type="tel" value={profile.phone} onChange={e => setProfile({...profile, phone: e.target.value})} className="w-full p-4 bg-slate-50 rounded-2xl font-bold text-xs ring-1 ring-slate-100" placeholder={t.phone} /></div>
-                  </FormSection>
+                  </Section>
 
                 </div>
 
@@ -416,9 +416,28 @@ const App: React.FC = () => {
                      <button onClick={() => setResult(null)} className="px-6 py-2 bg-slate-100 text-slate-500 font-black rounded-xl text-[10px] uppercase hover:bg-blue-50 hover:text-blue-600 transition-colors">{t.newForm}</button>
                    </div>
                    
-                   <div className="bg-blue-50/50 p-6 rounded-3xl mb-10 text-sm font-bold text-slate-700 border border-blue-100 whitespace-pre-wrap leading-relaxed shadow-inner">
+                   <div className="bg-blue-50/50 p-6 rounded-3xl mb-8 text-sm font-bold text-slate-700 border border-blue-100 whitespace-pre-wrap leading-relaxed shadow-inner">
                       {result.hindiContent}
                    </div>
+
+                   {/* Grounding Sources for AI transparency as per Gemini SDK guidelines */}
+                   {result.groundingSources && result.groundingSources.length > 0 && (
+                     <div className="mb-8 p-6 bg-slate-50 rounded-3xl border border-slate-200">
+                        <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4">आधिकारिक संदर्भ (Sources)</h3>
+                        <div className="flex flex-wrap gap-2">
+                          {result.groundingSources.map((source, i) => {
+                            const uri = source.web?.uri || source.maps?.uri;
+                            const title = source.web?.title || source.maps?.title || uri;
+                            if (!uri) return null;
+                            return (
+                              <a key={i} href={uri} target="_blank" rel="noreferrer" className="text-[9px] font-bold text-blue-600 hover:underline bg-white px-3 py-1.5 rounded-lg border border-slate-100 shadow-sm flex items-center gap-2">
+                                <span className="w-1.5 h-1.5 bg-blue-500 rounded-full"></span> {title}
+                              </a>
+                            );
+                          })}
+                        </div>
+                     </div>
+                   )}
 
                    <SchemesTable schemes={result.eligible_schemes} />
                 </div>

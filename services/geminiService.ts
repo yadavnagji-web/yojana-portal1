@@ -47,45 +47,30 @@ function robustJsonParse(text: string): any {
   return null;
 }
 
-function getEffectiveKey(): string | null {
-  const viteKey = (import.meta as any).env?.VITE_API_KEY;
-  if (viteKey && viteKey.trim() !== "") return viteKey;
-
-  const processKey = process.env.API_KEY;
-  if (processKey && processKey.trim() !== "") return processKey;
-
-  return null;
-}
-
-export async function testApiConnection(provider: 'gemini' | 'groq', key: string): Promise<boolean> {
-  const effectiveKey = key || getEffectiveKey();
-  
-  if (!effectiveKey) return false;
+/**
+ * Test Gemini API connection.
+ */
+export async function testApiConnection(): Promise<boolean> {
   try {
-    if (provider === 'gemini') {
-      const ai = new GoogleGenAI({ apiKey: effectiveKey });
-      const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: 'test connection, respond "ok"',
-      });
-      return !!response.text;
-    } else {
-      const resp = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-        method: "POST",
-        headers: { "Authorization": `Bearer ${effectiveKey}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: "llama-3.3-70b-versatile",
-          messages: [{ role: "user", content: "hi" }],
-          max_tokens: 5
-        })
-      });
-      return resp.ok;
-    }
-  } catch (e) { return false; }
+    // Guideline: Always use { apiKey: process.env.API_KEY } directly
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const response = await ai.models.generateContent({
+      model: 'gemini-3-flash-preview',
+      contents: 'test connection, respond "ok"',
+    });
+    return !!response.text;
+  } catch (e) { 
+    console.error("Gemini connection check failed:", e);
+    return false; 
+  }
 }
 
-async function analyzeWithGemini(profile: UserProfile, key: string): Promise<AnalysisResponse> {
-  const ai = new GoogleGenAI({ apiKey: key });
+/**
+ * Analyze profile with Gemini 3 Pro and extract grounding metadata.
+ */
+async function analyzeWithGemini(profile: UserProfile): Promise<AnalysisResponse> {
+  // Guideline: Always use { apiKey: process.env.API_KEY } directly
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   const prompt = `उपयोगकर्ता प्रोफाइल डेटा: ${JSON.stringify(profile)}.
   कृपया 20 योजनाओं की सूची दें। समावेशिता सुनिश्चित करें। 
   सशर्त पात्र (Conditional) योजनाओं को स्पष्ट तर्क के साथ जोड़ें। 
@@ -102,8 +87,12 @@ async function analyzeWithGemini(profile: UserProfile, key: string): Promise<Ana
     }
   });
   
+  // Guideline: Use .text property directly
   const raw = res.text || "";
   const aiSchemes = robustJsonParse(raw) || [];
+  
+  // Extract grounding metadata for transparency as per guidelines
+  const groundingSources = res.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
 
   if (aiSchemes.length > 0) {
     aiSchemes.forEach((s: Scheme) => dbService.upsertScheme(s));
@@ -112,6 +101,7 @@ async function analyzeWithGemini(profile: UserProfile, key: string): Promise<Ana
   return {
     hindiContent: raw.split(/---JSON_START---|```json|\[|\{/)[0].trim() || "यहाँ आपकी प्रोफाइल के आधार पर सटीक विश्लेषण दिया गया है:",
     eligible_schemes: aiSchemes,
+    groundingSources,
   };
 }
 
@@ -123,18 +113,20 @@ export async function analyzeEligibility(profile: UserProfile, isDummy: boolean)
   const dbSchemes = await dbService.getAllSchemes();
   
   const filteredDb = dbSchemes.filter(s => {
+    // Basic safety filters
     if (s.government === 'Rajasthan Govt' && profile.state !== 'Rajasthan') return false;
-    if (s.yojana_name.includes("महिला") || s.yojana_name.includes("छात्रा") || s.category.includes("Women")) {
-       if (profile.gender === 'Male') return false;
-    }
+    
+    // Gender safety filter
+    const isFemaleSpecific = s.yojana_name.includes("महिला") || s.yojana_name.includes("छात्रा") || s.category?.includes("Women");
+    if (isFemaleSpecific && profile.gender === 'Male') return false;
+
     return true;
   });
 
-  const geminiKey = getEffectiveKey();
-
-  if (geminiKey) {
+  // Guideline: Exclusively use process.env.API_KEY
+  if (process.env.API_KEY) {
     try {
-      const aiResult = await analyzeWithGemini(profile, geminiKey);
+      const aiResult = await analyzeWithGemini(profile);
       const seen = new Set(filteredDb.map(s => s.yojana_name));
       const combined = [...filteredDb];
       
@@ -152,7 +144,10 @@ export async function analyzeEligibility(profile: UserProfile, isDummy: boolean)
       return finalResult;
     } catch (e) {
       console.warn("AI logic failed, falling back to database results", e);
-      return { hindiContent: "डेटाबेस से प्राप्त परिणाम (AI त्रुटि): आपकी प्रोफाइल के लिए उपलब्ध प्रमुख योजनाएं नीचे दी गई हैं।", eligible_schemes: filteredDb };
+      return { 
+        hindiContent: "डेटाबेस से प्राप्त परिणाम (AI त्रुटि): आपकी प्रोफाइल के लिए उपलब्ध प्रमुख योजनाएं नीचे दी गई हैं।", 
+        eligible_schemes: filteredDb 
+      };
     }
   }
 
