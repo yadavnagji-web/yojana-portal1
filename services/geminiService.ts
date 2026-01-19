@@ -12,24 +12,24 @@ const SYSTEM_INSTRUCTION = `आप भारत सरकार और राज
 4. योजनाओं का कोटा: कम से कम 15-20 योजनाओं की विस्तृत सूची दें। 
 5. भाषा और प्रारूप: सारा विवरण शुद्ध हिंदी में हो। परिणाम अनिवार्य रूप से JSON ऑब्जेक्ट में 'eligible_schemes' ऐरे के साथ हो।
 
+योजना ऑब्जेक्ट में निम्नलिखित फील्ड अनिवार्य हैं:
+- yojana_name, government, category, short_purpose_hindi, detailed_benefits, eligibility_criteria (array), eligibility_status ('ELIGIBLE' | 'NOT_ELIGIBLE' | 'CONDITIONAL'), eligibility_reason_hindi, required_documents (array), form_source, application_type, signatures_required (array), submission_point, official_pdf_link, scheme_status.
+
 JSON को ---JSON_START--- और ---JSON_END--- के बीच रखें।`;
 
 function robustJsonParse(text: string): any {
   if (!text) return null;
   try {
-    // Strategy 1: Explicit tags
     const tagged = text.match(/---JSON_START---([\s\S]*?)---JSON_END---/);
     if (tagged) {
       const parsed = JSON.parse(tagged[1].trim());
       return parsed.eligible_schemes || (Array.isArray(parsed) ? parsed : null);
     }
-    // Strategy 2: Markdown block
     const md = text.match(/```json\s*([\s\S]*?)\s*```/i);
     if (md) {
       const parsed = JSON.parse(md[1].trim());
       return parsed.eligible_schemes || (Array.isArray(parsed) ? parsed : null);
     }
-    // Strategy 3: Search for first { or [ and last } or ]
     const startIdx = Math.min(
       text.indexOf('{') === -1 ? Infinity : text.indexOf('{'),
       text.indexOf('[') === -1 ? Infinity : text.indexOf('[')
@@ -42,24 +42,15 @@ function robustJsonParse(text: string): any {
       return parsed.eligible_schemes || (Array.isArray(parsed) ? parsed : null);
     }
   } catch (e) {
-    console.error("AI JSON Parse Error (Robust):", e);
+    console.error("AI JSON Parse Error:", e);
   }
   return null;
 }
 
-/**
- * Gets the most appropriate API key based on the defined priority.
- */
-async function getEffectiveKey(): Promise<string | null> {
-  // 1. Priority: VITE_API_KEY (Vercel / Vite Environment)
+function getEffectiveKey(): string | null {
   const viteKey = (import.meta as any).env?.VITE_API_KEY;
   if (viteKey && viteKey.trim() !== "") return viteKey;
 
-  // 2. Fallback: Saved Keys in Local Database (IndexedDB)
-  const savedKeys = await dbService.getSetting<any>('api_keys');
-  if (savedKeys?.gemini && savedKeys.gemini.trim() !== "") return savedKeys.gemini;
-
-  // 3. Last Resort: process.env.API_KEY (System Environment)
   const processKey = process.env.API_KEY;
   if (processKey && processKey.trim() !== "") return processKey;
 
@@ -67,7 +58,7 @@ async function getEffectiveKey(): Promise<string | null> {
 }
 
 export async function testApiConnection(provider: 'gemini' | 'groq', key: string): Promise<boolean> {
-  const effectiveKey = key || await getEffectiveKey();
+  const effectiveKey = key || getEffectiveKey();
   
   if (!effectiveKey) return false;
   try {
@@ -104,7 +95,11 @@ async function analyzeWithGemini(profile: UserProfile, key: string): Promise<Ana
   const res = await ai.models.generateContent({
     model: 'gemini-3-pro-preview',
     contents: prompt,
-    config: { systemInstruction: SYSTEM_INSTRUCTION, tools: [{ googleSearch: {} }], temperature: 0.8 }
+    config: { 
+      systemInstruction: SYSTEM_INSTRUCTION, 
+      tools: [{ googleSearch: {} }], 
+      temperature: 0.8 
+    }
   });
   
   const raw = res.text || "";
@@ -135,7 +130,7 @@ export async function analyzeEligibility(profile: UserProfile, isDummy: boolean)
     return true;
   });
 
-  const geminiKey = await getEffectiveKey();
+  const geminiKey = getEffectiveKey();
 
   if (geminiKey) {
     try {
@@ -157,12 +152,12 @@ export async function analyzeEligibility(profile: UserProfile, isDummy: boolean)
       return finalResult;
     } catch (e) {
       console.warn("AI logic failed, falling back to database results", e);
-      return { hindiContent: "डेटाबेस से प्राप्त परिणाम (AI त्रुटि):", eligible_schemes: filteredDb };
+      return { hindiContent: "डेटाबेस से प्राप्त परिणाम (AI त्रुटि): आपकी प्रोफाइल के लिए उपलब्ध प्रमुख योजनाएं नीचे दी गई हैं।", eligible_schemes: filteredDb };
     }
   }
 
   return { 
-    hindiContent: "त्रुटि: कोई सक्रिय API Key नहीं मिली। कृपया Vercel डैशबोर्ड में VITE_API_KEY सेट करें। परिणाम वर्तमान में केवल स्थानीय डेटाबेस से दिखाए जा रहे हैं।", 
+    hindiContent: "खोज परिणाम: आपकी प्रोफाइल के आधार पर स्थानीय डेटाबेस से महत्वपूर्ण योजनाएं नीचे दी गई हैं। (नोट: अधिक सटीक परिणामों के लिए AI सक्रियण की प्रतीक्षा है)", 
     eligible_schemes: filteredDb 
   };
 }
