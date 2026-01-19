@@ -47,15 +47,32 @@ function robustJsonParse(text: string): any {
   return null;
 }
 
+/**
+ * Gets the most appropriate API key based on the defined priority.
+ */
+async function getEffectiveKey(): Promise<string | null> {
+  // 1. Priority: VITE_API_KEY (Vercel / Vite Environment)
+  const viteKey = (import.meta as any).env?.VITE_API_KEY;
+  if (viteKey && viteKey.trim() !== "") return viteKey;
+
+  // 2. Fallback: Saved Keys in Local Database (IndexedDB)
+  const savedKeys = await dbService.getSetting<any>('api_keys');
+  if (savedKeys?.gemini && savedKeys.gemini.trim() !== "") return savedKeys.gemini;
+
+  // 3. Last Resort: process.env.API_KEY (System Environment)
+  const processKey = process.env.API_KEY;
+  if (processKey && processKey.trim() !== "") return processKey;
+
+  return null;
+}
+
 export async function testApiConnection(provider: 'gemini' | 'groq', key: string): Promise<boolean> {
-  // Use VITE_API_KEY from environment as requested, fall back to process.env.API_KEY
-  const apiKey = (import.meta as any).env.VITE_API_KEY || process.env.API_KEY;
-  const finalKey = key || apiKey;
+  const effectiveKey = key || await getEffectiveKey();
   
-  if (!finalKey) return false;
+  if (!effectiveKey) return false;
   try {
     if (provider === 'gemini') {
-      const ai = new GoogleGenAI({ apiKey: finalKey });
+      const ai = new GoogleGenAI({ apiKey: effectiveKey });
       const response = await ai.models.generateContent({
         model: 'gemini-3-flash-preview',
         contents: 'test connection, respond "ok"',
@@ -64,7 +81,7 @@ export async function testApiConnection(provider: 'gemini' | 'groq', key: string
     } else {
       const resp = await fetch("https://api.groq.com/openai/v1/chat/completions", {
         method: "POST",
-        headers: { "Authorization": `Bearer ${finalKey}`, "Content-Type": "application/json" },
+        headers: { "Authorization": `Bearer ${effectiveKey}`, "Content-Type": "application/json" },
         body: JSON.stringify({
           model: "llama-3.3-70b-versatile",
           messages: [{ role: "user", content: "hi" }],
@@ -118,11 +135,7 @@ export async function analyzeEligibility(profile: UserProfile, isDummy: boolean)
     return true;
   });
 
-  const savedKeys = await dbService.getSetting<any>('api_keys');
-  
-  // Priority: Saved Keys (Admin) -> VITE_API_KEY (Vercel) -> process.env.API_KEY (System)
-  const apiKey = (import.meta as any).env.VITE_API_KEY || process.env.API_KEY;
-  const geminiKey = savedKeys?.gemini || apiKey;
+  const geminiKey = await getEffectiveKey();
 
   if (geminiKey) {
     try {
@@ -148,5 +161,8 @@ export async function analyzeEligibility(profile: UserProfile, isDummy: boolean)
     }
   }
 
-  return { hindiContent: "डेटाबेस से प्राप्त परिणाम (कृपया Admin में API Key सेट करें या Vercel में जोड़ें):", eligible_schemes: filteredDb };
+  return { 
+    hindiContent: "त्रुटि: कोई सक्रिय API Key नहीं मिली। कृपया Vercel डैशबोर्ड में VITE_API_KEY सेट करें। परिणाम वर्तमान में केवल स्थानीय डेटाबेस से दिखाए जा रहे हैं।", 
+    eligible_schemes: filteredDb 
+  };
 }

@@ -1,13 +1,13 @@
 
 import React, { useState, useEffect } from 'react';
-import { UserProfile, AnalysisResponse, Scheme, AuthState, EligibilityStatus } from './types';
+import { UserProfile, AnalysisResponse, Scheme, EligibilityStatus } from './types';
 import { 
   RAJASTHAN_DISTRICTS, CATEGORIES, GENDER, INCOME_SLABS, MARITAL_STATUS,
   YES_NO, RATION_CARD_TYPES, EMPLOYMENT_STATUS, GOVT_SERVICE, 
   RURAL_URBAN, EDUCATION_LEVELS, INSTITUTION_TYPES, PENSION_STATUS
 } from './constants';
 import FormSection from './components/FormSection';
-import { analyzeEligibility, testApiConnection } from './services/geminiService';
+import { analyzeEligibility } from './services/geminiService';
 import { dbService } from './services/dbService';
 
 const translations = {
@@ -16,7 +16,6 @@ const translations = {
     desc: 'AI Based Analytics',
     form: 'आवेदन फॉर्म',
     features: 'विशेषताएँ',
-    admin: 'एडमिन',
     submit: 'खोजें (Submit)',
     searching: 'सरकारी डेटा की लाइव जांच जारी है...',
     results: 'खोज परिणाम',
@@ -83,15 +82,14 @@ const translations = {
     f4d: 'Gemini 3 Pro तकनीक से आपकी प्रोफाइल का गहन विश्लेषण।',
     f5: 'आवेदन रोडमैप',
     f5d: 'दस्तावेज़, हस्ताक्षर और जमा करने के स्थान की स्पष्ट जानकारी।',
-    f6: 'सुरक्षित कीज़',
-    f6d: 'आपकी API कीज़ स्थानीय रूप से सुरक्षित रहती हैं जब तक आप उन्हें हटा न दें।'
+    f6: 'सुरक्षित तकनीक',
+    f6d: 'आपका डेटा सुरक्षित रहता है और विश्लेषण पूरी तरह से पारदर्शी है।'
   },
   en: {
     title: 'Govt Scheme Search Engine',
     desc: 'AI Based Analytics',
     form: 'Application Form',
     features: 'Features',
-    admin: 'Admin',
     submit: 'Search Now (Submit)',
     searching: 'Live Govt Data Analysis in Progress...',
     results: 'Search Results',
@@ -158,8 +156,8 @@ const translations = {
     f4d: 'Deep profile analysis using Gemini 3 Pro technology.',
     f5: 'Application Roadmap',
     f5d: 'Clear info on documents, signatures, and submission points.',
-    f6: 'Secure Keys',
-    f6d: 'Your API keys stay secure locally until you decide to delete them.'
+    f6: 'Secure Tech',
+    f6d: 'Your data is secure and analysis is completely transparent.'
   }
 };
 
@@ -248,14 +246,9 @@ const SchemesTable: React.FC<{ schemes: Scheme[] }> = ({ schemes }) => {
 
 const App: React.FC = () => {
   const [lang, setLang] = useState<'hi' | 'en'>('hi');
-  const [activeTab, setActiveTab] = useState<'form' | 'admin' | 'features'>('form');
+  const [activeTab, setActiveTab] = useState<'form' | 'features'>('form');
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<AnalysisResponse | null>(null);
-  const [auth, setAuth] = useState<AuthState>({ isAuthenticated: false, user: null });
-  const [loginForm, setLoginForm] = useState({ email: '', password: '' });
-  const [apiKeys, setApiKeys] = useState({ gemini: '', groq: '' });
-  const [syncString, setSyncString] = useState('');
-  const [apiStatus, setApiStatus] = useState({ gemini: 'idle', groq: 'idle' });
   const t = translations[lang];
 
   const [profile, setProfile] = useState<UserProfile>({
@@ -263,13 +256,7 @@ const App: React.FC = () => {
   });
 
   useEffect(() => {
-    dbService.init().then(async () => {
-      const keys = await dbService.getSetting<any>('api_keys');
-      if (keys) {
-        setApiKeys(keys);
-        setSyncString(btoa(JSON.stringify(keys)));
-      }
-    });
+    dbService.init();
   }, []);
 
   const handleAnalyze = async (e: React.FormEvent) => {
@@ -279,34 +266,11 @@ const App: React.FC = () => {
     try {
       const res = await analyzeEligibility(profile, false);
       setResult(res);
-    } catch (err: any) { alert(err.message || "API Error: Please check keys in Admin."); }
+    } catch (err: any) { 
+      alert(err.message || "खोज के दौरान त्रुटि हुई। कृपया फिर से प्रयास करें।"); 
+    }
     finally { setLoading(false); }
   };
-
-  const checkApi = async (provider: 'gemini' | 'groq') => {
-    setApiStatus(prev => ({ ...prev, [provider]: 'loading' }));
-    const ok = await testApiConnection(provider, apiKeys[provider]);
-    setApiStatus(prev => ({ ...prev, [provider]: ok ? 'success' : 'error' }));
-  };
-
-  const saveKeys = async () => { 
-    await dbService.setSetting('api_keys', apiKeys); 
-    setSyncString(btoa(JSON.stringify(apiKeys)));
-    alert("API Keys सहेज ली गई हैं। अब ये इसी ब्राउज़र में स्थायी रहेंगी।"); 
-  };
-
-  const importSync = async () => {
-    try {
-      const decoded = JSON.parse(atob(syncString));
-      if (decoded.gemini || decoded.groq) {
-        setApiKeys(decoded);
-        await dbService.setSetting('api_keys', decoded);
-        alert("Config सिंक हो गया है! अब आप किसी भी उपकरण पर इसे उपयोग कर सकते हैं।");
-      }
-    } catch(e) { alert("गलत सिंक कोड।"); }
-  };
-
-  const deleteKeys = async () => { if (window.confirm("API Keys डिलीट करें?")) { await dbService.setSetting('api_keys', { gemini: '', groq: '' }); setApiKeys({ gemini: '', groq: '' }); setSyncString(''); setApiStatus({ gemini: 'idle', groq: 'idle' }); alert("API Keys डिलीट कर दी गई हैं।"); } };
 
   return (
     <div className="min-h-screen bg-[#FDFDFD] flex flex-col font-sans">
@@ -318,7 +282,6 @@ const App: React.FC = () => {
             <nav className="flex bg-slate-100 p-1 rounded-2xl gap-1">
               <button onClick={() => setActiveTab('form')} className={`px-4 py-2 rounded-xl font-black text-[10px] uppercase transition-all ${activeTab === 'form' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400'}`}>{t.form}</button>
               <button onClick={() => setActiveTab('features')} className={`px-4 py-2 rounded-xl font-black text-[10px] uppercase transition-all ${activeTab === 'features' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400'}`}>{t.features}</button>
-              <button onClick={() => setActiveTab('admin')} className={`px-4 py-2 rounded-xl font-black text-[10px] uppercase transition-all ${activeTab === 'admin' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400'}`}>{t.admin}</button>
             </nav>
           </div>
         </div>
@@ -487,74 +450,6 @@ const App: React.FC = () => {
                 </div>
               ))}
             </div>
-          </div>
-        )}
-
-        {activeTab === 'admin' && (
-          <div className="max-w-xl mx-auto space-y-8">
-            {!auth.isAuthenticated ? (
-               <div className="bg-white p-12 rounded-[3.5rem] shadow-2xl border border-slate-50 text-center space-y-8">
-                  <h2 className="text-2xl font-black text-slate-800">एडमिन लॉगिन (Nagji Yadav)</h2>
-                  <form onSubmit={e => {
-                    e.preventDefault();
-                    if(loginForm.email === 'yadavnagji@gmail.com' && loginForm.password === '123456') setAuth({ isAuthenticated: true, user: 'Nagji' });
-                    else alert("गलत जानकारी");
-                  }} className="space-y-4">
-                    <input type="email" required onChange={e => setLoginForm({...loginForm, email: e.target.value})} className="w-full p-4 bg-slate-50 rounded-2xl font-bold text-xs" placeholder="Email" />
-                    <input type="password" required onChange={e => setLoginForm({...loginForm, password: e.target.value})} className="w-full p-4 bg-slate-50 rounded-2xl font-bold text-xs" placeholder="Password" />
-                    <button type="submit" className="w-full py-4 bg-blue-600 text-white font-black rounded-2xl shadow-xl hover:bg-blue-700">लॉगिन</button>
-                  </form>
-               </div>
-            ) : (
-              <div className="bg-white p-10 rounded-[3.5rem] shadow-2xl space-y-12">
-                <section className="space-y-6">
-                  <h3 className="text-xs font-black uppercase text-slate-400">API कॉन्फ़िगरेशन (LocalDB Permanent Storage)</h3>
-                  <div className="space-y-6">
-                     <div className="flex flex-col gap-2">
-                        <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Gemini API Key (Primary) {apiStatus.gemini === 'success' && '✅'}</label>
-                        <div className="flex gap-2">
-                          <input type="password" value={apiKeys.gemini} onChange={e => setApiKeys({...apiKeys, gemini: e.target.value})} className="flex-1 p-4 bg-slate-50 rounded-xl text-xs font-mono" />
-                          <button onClick={() => checkApi('gemini')} className="px-4 bg-slate-900 text-white rounded-xl text-[10px] font-black uppercase hover:bg-blue-600 transition-colors">Test</button>
-                        </div>
-                     </div>
-                     <div className="flex flex-col gap-2">
-                        <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Groq API Key (Backup) {apiStatus.groq === 'success' && '✅'}</label>
-                        <div className="flex gap-2">
-                          <input type="password" value={apiKeys.groq} onChange={e => setApiKeys({...apiKeys, groq: e.target.value})} className="flex-1 p-4 bg-slate-50 rounded-xl text-xs font-mono" />
-                          <button onClick={() => checkApi('groq')} className="px-4 bg-slate-900 text-white rounded-xl text-[10px] font-black uppercase hover:bg-blue-600 transition-colors">Test</button>
-                        </div>
-                     </div>
-                     <div className="flex flex-col gap-3">
-                        <button onClick={saveKeys} className="w-full py-4 bg-blue-600 text-white font-black rounded-2xl shadow-lg hover:bg-blue-700 transition-all">सहेजें (Save Locally)</button>
-                     </div>
-                  </div>
-                </section>
-
-                <section className="space-y-6 pt-6 border-t border-slate-100">
-                  <h3 className="text-xs font-black uppercase text-slate-400">सिंक कॉन्फ़िगरेशन (Cross-Browser Sync)</h3>
-                  <p className="text-[10px] text-slate-500 font-bold leading-relaxed">इस कोड को कॉपी करके आप किसी भी दूसरे ब्राउज़र या कंप्यूटर पर अपना सेटअप बहाल (Restore) कर सकते हैं।</p>
-                  <div className="space-y-3">
-                     <textarea 
-                        value={syncString} 
-                        onChange={e => setSyncString(e.target.value)}
-                        className="w-full p-4 bg-slate-50 rounded-xl text-[10px] font-mono h-24 border border-slate-100" 
-                        placeholder="Sync Code यहाँ पेस्ट करें..."
-                     />
-                     <button onClick={importSync} className="w-full py-3 bg-slate-900 text-white text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-black">कोड लागू करें (Apply Sync Code)</button>
-                  </div>
-                </section>
-
-                <div className="p-4 bg-blue-50 rounded-2xl">
-                   <p className="text-[9px] font-black text-blue-600 uppercase mb-2">महत्वपूर्ण नोट:</p>
-                   <p className="text-[10px] text-blue-800 font-bold leading-relaxed">यदि आप चाहते हैं कि यह ऐप पब्लिक रूप से हमेशा काम करे, तो कृपया अपने होस्टिंग प्लेटफॉर्म (जैसे Vercel) के डैशबोर्ड में <b>API_KEY</b> एनवायरनमेंट वेरिएबल सेट करें।</p>
-                </div>
-
-                <div className="pt-6 border-t border-slate-100 flex flex-col gap-4">
-                  <button onClick={deleteKeys} className="text-[10px] font-black text-red-400 uppercase tracking-widest hover:text-red-600 text-center">सभी डेटा डिलीट करें</button>
-                  <button onClick={() => setAuth({ isAuthenticated: false, user: null })} className="text-[10px] font-black text-slate-400 uppercase tracking-widest hover:text-blue-600 text-center">लॉग आउट</button>
-                </div>
-              </div>
-            )}
           </div>
         )}
       </main>
