@@ -254,6 +254,7 @@ const App: React.FC = () => {
   const [auth, setAuth] = useState<AuthState>({ isAuthenticated: false, user: null });
   const [loginForm, setLoginForm] = useState({ email: '', password: '' });
   const [apiKeys, setApiKeys] = useState({ gemini: '', groq: '' });
+  const [syncString, setSyncString] = useState('');
   const [apiStatus, setApiStatus] = useState({ gemini: 'idle', groq: 'idle' });
   const t = translations[lang];
 
@@ -264,7 +265,10 @@ const App: React.FC = () => {
   useEffect(() => {
     dbService.init().then(async () => {
       const keys = await dbService.getSetting<any>('api_keys');
-      if (keys) setApiKeys(keys);
+      if (keys) {
+        setApiKeys(keys);
+        setSyncString(btoa(JSON.stringify(keys)));
+      }
     });
   }, []);
 
@@ -285,8 +289,24 @@ const App: React.FC = () => {
     setApiStatus(prev => ({ ...prev, [provider]: ok ? 'success' : 'error' }));
   };
 
-  const saveKeys = async () => { await dbService.setSetting('api_keys', apiKeys); alert("API Keys सहेज ली गई हैं।"); };
-  const deleteKeys = async () => { if (window.confirm("API Keys डिलीट करें?")) { await dbService.setSetting('api_keys', { gemini: '', groq: '' }); setApiKeys({ gemini: '', groq: '' }); setApiStatus({ gemini: 'idle', groq: 'idle' }); alert("API Keys डिलीट कर दी गई हैं।"); } };
+  const saveKeys = async () => { 
+    await dbService.setSetting('api_keys', apiKeys); 
+    setSyncString(btoa(JSON.stringify(apiKeys)));
+    alert("API Keys सहेज ली गई हैं। अब ये इसी ब्राउज़र में स्थायी रहेंगी।"); 
+  };
+
+  const importSync = async () => {
+    try {
+      const decoded = JSON.parse(atob(syncString));
+      if (decoded.gemini || decoded.groq) {
+        setApiKeys(decoded);
+        await dbService.setSetting('api_keys', decoded);
+        alert("Config सिंक हो गया है! अब आप किसी भी उपकरण पर इसे उपयोग कर सकते हैं।");
+      }
+    } catch(e) { alert("गलत सिंक कोड।"); }
+  };
+
+  const deleteKeys = async () => { if (window.confirm("API Keys डिलीट करें?")) { await dbService.setSetting('api_keys', { gemini: '', groq: '' }); setApiKeys({ gemini: '', groq: '' }); setSyncString(''); setApiStatus({ gemini: 'idle', groq: 'idle' }); alert("API Keys डिलीट कर दी गई हैं।"); } };
 
   return (
     <div className="min-h-screen bg-[#FDFDFD] flex flex-col font-sans">
@@ -505,13 +525,33 @@ const App: React.FC = () => {
                         </div>
                      </div>
                      <div className="flex flex-col gap-3">
-                        <button onClick={saveKeys} className="w-full py-4 bg-blue-600 text-white font-black rounded-2xl shadow-lg hover:bg-blue-700 transition-all">Keys स्थायी रूप से सेव करें</button>
-                        <button onClick={deleteKeys} className="w-full py-2 bg-red-50 text-red-600 text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-red-100 transition-all">Delete All Saved Keys</button>
+                        <button onClick={saveKeys} className="w-full py-4 bg-blue-600 text-white font-black rounded-2xl shadow-lg hover:bg-blue-700 transition-all">सहेजें (Save Locally)</button>
                      </div>
                   </div>
                 </section>
-                <div className="pt-6 border-t border-slate-100 flex justify-center">
-                  <button onClick={() => setAuth({ isAuthenticated: false, user: null })} className="text-[10px] font-black text-slate-400 uppercase tracking-widest hover:text-blue-600 transition-colors">लॉग आउट</button>
+
+                <section className="space-y-6 pt-6 border-t border-slate-100">
+                  <h3 className="text-xs font-black uppercase text-slate-400">सिंक कॉन्फ़िगरेशन (Cross-Browser Sync)</h3>
+                  <p className="text-[10px] text-slate-500 font-bold leading-relaxed">इस कोड को कॉपी करके आप किसी भी दूसरे ब्राउज़र या कंप्यूटर पर अपना सेटअप बहाल (Restore) कर सकते हैं।</p>
+                  <div className="space-y-3">
+                     <textarea 
+                        value={syncString} 
+                        onChange={e => setSyncString(e.target.value)}
+                        className="w-full p-4 bg-slate-50 rounded-xl text-[10px] font-mono h-24 border border-slate-100" 
+                        placeholder="Sync Code यहाँ पेस्ट करें..."
+                     />
+                     <button onClick={importSync} className="w-full py-3 bg-slate-900 text-white text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-black">कोड लागू करें (Apply Sync Code)</button>
+                  </div>
+                </section>
+
+                <div className="p-4 bg-blue-50 rounded-2xl">
+                   <p className="text-[9px] font-black text-blue-600 uppercase mb-2">महत्वपूर्ण नोट:</p>
+                   <p className="text-[10px] text-blue-800 font-bold leading-relaxed">यदि आप चाहते हैं कि यह ऐप पब्लिक रूप से हमेशा काम करे, तो कृपया अपने होस्टिंग प्लेटफॉर्म (जैसे Vercel) के डैशबोर्ड में <b>API_KEY</b> एनवायरनमेंट वेरिएबल सेट करें।</p>
+                </div>
+
+                <div className="pt-6 border-t border-slate-100 flex flex-col gap-4">
+                  <button onClick={deleteKeys} className="text-[10px] font-black text-red-400 uppercase tracking-widest hover:text-red-600 text-center">सभी डेटा डिलीट करें</button>
+                  <button onClick={() => setAuth({ isAuthenticated: false, user: null })} className="text-[10px] font-black text-slate-400 uppercase tracking-widest hover:text-blue-600 text-center">लॉग आउट</button>
                 </div>
               </div>
             )}
