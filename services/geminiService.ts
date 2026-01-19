@@ -6,27 +6,11 @@ import { dbService } from "./dbService";
 const SYSTEM_INSTRUCTION = `आप भारत सरकार और राजस्थान सरकार की योजनाओं के विशेषज्ञ विश्लेषक हैं। 
 
 पात्रता विश्लेषण नियम (Accuracy & Inclusivity Rules):
-1. समावेशी दृष्टिकोण (Inclusivity): यदि उपयोगकर्ता किसी योजना की 80% शर्तें पूरी करता है, तो उसे 'CONDITIONAL' के रूप में दिखाएं और बताएं कि बाकी 20% शर्तें कैसे पूरी की जा सकती हैं (जैसे कि अमुक दस्तावेज़ बनवाना)।
-2. सशर्त पात्रता (Conditional Eligibility): "सशर्त पात्र" (Conditional) श्रेणी का उपयोग उन योजनाओं के लिए करें जहाँ लाभ किसी विशेष घटना (जैसे विवाह, जन्म, मेरिट, दुर्घटना) पर निर्भर है।
-3. प्रोफाइल मिलान: उपयोगकर्ता के 30+ मापदंडों (जैसे TSP क्षेत्र, अल्पसंख्यक, विकलांगता, स्नातक स्तर) का उपयोग करके सटीक योजनाएं चुनें। डूंगरपुर, बांसवाड़ा जैसे जिलों के लिए TSP लाभों को अनिवार्य रूप से शामिल करें।
-4. योजनाओं का कोटा: कम से कम 15-20 योजनाओं की विस्तृत सूची दें। केवल बीमा योजनाओं तक सीमित न रहें; आवास, शिक्षा, पेंशन, और कृषि को भी जोड़ें।
+1. समावेशी दृष्टिकोण (Inclusivity): यदि उपयोगकर्ता किसी योजना की 80% शर्तें पूरी करता है, तो उसे 'CONDITIONAL' के रूप में दिखाएं और बताएं कि बाकी 20% शर्तें कैसे पूरी की जा सकती हैं।
+2. सशर्त पात्रता (Conditional Eligibility): "सशर्त पात्र" (Conditional) श्रेणी का उपयोग उन योजनाओं के लिए करें जहाँ लाभ किसी विशेष घटना पर निर्भर है।
+3. प्रोफाइल मिलान: उपयोगकर्ता के 30+ मापदंडों का उपयोग करें। डूंगरपुर, बांसवाड़ा जैसे जिलों के लिए TSP लाभों को शामिल करें।
+4. योजनाओं का कोटा: कम से कम 15-20 योजनाओं की विस्तृत सूची दें। 
 5. भाषा और प्रारूप: सारा विवरण शुद्ध हिंदी में हो। परिणाम अनिवार्य रूप से JSON ऑब्जेक्ट में 'eligible_schemes' ऐरे के साथ हो।
-
-अनिवार्य JSON ढांचा:
-{
-  "eligible_schemes": [
-    {
-      "yojana_name": "योजना का नाम",
-      "government": "Rajasthan Govt | Central Govt",
-      "detailed_benefits": "योजना के लाभों का विस्तृत विवरण",
-      "eligibility_status": "ELIGIBLE | CONDITIONAL",
-      "eligibility_reason_hindi": "पात्रता या सशर्त पात्रता का ठोस तर्क",
-      "required_documents": ["दस्तावेज 1", "दस्तावेज 2"],
-      "official_pdf_link": "योजना का लिंक",
-      ...अन्य फील्ड
-    }
-  ]
-}
 
 JSON को ---JSON_START--- और ---JSON_END--- के बीच रखें।`;
 
@@ -45,11 +29,16 @@ function robustJsonParse(text: string): any {
       const parsed = JSON.parse(md[1].trim());
       return parsed.eligible_schemes || (Array.isArray(parsed) ? parsed : null);
     }
-    // Strategy 3: Search for first { and last }
-    const startIdx = text.indexOf('{');
-    const endIdx = text.lastIndexOf('}');
-    if (startIdx !== -1 && endIdx !== -1) {
-      const parsed = JSON.parse(text.substring(startIdx, endIdx + 1));
+    // Strategy 3: Search for first { or [ and last } or ]
+    const startIdx = Math.min(
+      text.indexOf('{') === -1 ? Infinity : text.indexOf('{'),
+      text.indexOf('[') === -1 ? Infinity : text.indexOf('[')
+    );
+    const endIdx = Math.max(text.lastIndexOf('}'), text.lastIndexOf(']'));
+    
+    if (startIdx !== Infinity && endIdx !== -1 && endIdx > startIdx) {
+      const cleaned = text.substring(startIdx, endIdx + 1);
+      const parsed = JSON.parse(cleaned);
       return parsed.eligible_schemes || (Array.isArray(parsed) ? parsed : null);
     }
   } catch (e) {
@@ -59,10 +48,14 @@ function robustJsonParse(text: string): any {
 }
 
 export async function testApiConnection(provider: 'gemini' | 'groq', key: string): Promise<boolean> {
-  if (!key) return false;
+  // Use VITE_API_KEY from environment as requested, fall back to process.env.API_KEY
+  const apiKey = (import.meta as any).env.VITE_API_KEY || process.env.API_KEY;
+  const finalKey = key || apiKey;
+  
+  if (!finalKey) return false;
   try {
     if (provider === 'gemini') {
-      const ai = new GoogleGenAI({ apiKey: key });
+      const ai = new GoogleGenAI({ apiKey: finalKey });
       const response = await ai.models.generateContent({
         model: 'gemini-3-flash-preview',
         contents: 'test connection, respond "ok"',
@@ -71,7 +64,7 @@ export async function testApiConnection(provider: 'gemini' | 'groq', key: string
     } else {
       const resp = await fetch("https://api.groq.com/openai/v1/chat/completions", {
         method: "POST",
-        headers: { "Authorization": `Bearer ${key}`, "Content-Type": "application/json" },
+        headers: { "Authorization": `Bearer ${finalKey}`, "Content-Type": "application/json" },
         body: JSON.stringify({
           model: "llama-3.3-70b-versatile",
           messages: [{ role: "user", content: "hi" }],
@@ -86,9 +79,9 @@ export async function testApiConnection(provider: 'gemini' | 'groq', key: string
 async function analyzeWithGemini(profile: UserProfile, key: string): Promise<AnalysisResponse> {
   const ai = new GoogleGenAI({ apiKey: key });
   const prompt = `उपयोगकर्ता प्रोफाइल डेटा: ${JSON.stringify(profile)}.
-  कृपया 20 योजनाओं की सूची दें। समावेशिता (Inclusivity) सुनिश्चित करें। 
+  कृपया 20 योजनाओं की सूची दें। समावेशिता सुनिश्चित करें। 
   सशर्त पात्र (Conditional) योजनाओं को स्पष्ट तर्क के साथ जोड़ें। 
-  बीमा योजनाओं (APY, PMJJBY, PMSBY) को केवल 2-3 तक ही सीमित रखें। 
+  बीमा योजनाओं को केवल 2-3 तक रखें। 
   विशेष रूप से राजस्थान के मेधावी स्नातक छात्रों और ग्रामीण महिलाओं के लिए योजनाओं पर ध्यान दें।`;
   
   const res = await ai.models.generateContent({
@@ -117,7 +110,6 @@ export async function analyzeEligibility(profile: UserProfile, isDummy: boolean)
 
   const dbSchemes = await dbService.getAllSchemes();
   
-  // Local DB filter (Basic relevance check)
   const filteredDb = dbSchemes.filter(s => {
     if (s.government === 'Rajasthan Govt' && profile.state !== 'Rajasthan') return false;
     if (s.yojana_name.includes("महिला") || s.yojana_name.includes("छात्रा") || s.category.includes("Women")) {
@@ -127,7 +119,10 @@ export async function analyzeEligibility(profile: UserProfile, isDummy: boolean)
   });
 
   const savedKeys = await dbService.getSetting<any>('api_keys');
-  const geminiKey = savedKeys?.gemini || process.env.API_KEY;
+  
+  // Priority: Saved Keys (Admin) -> VITE_API_KEY (Vercel) -> process.env.API_KEY (System)
+  const apiKey = (import.meta as any).env.VITE_API_KEY || process.env.API_KEY;
+  const geminiKey = savedKeys?.gemini || apiKey;
 
   if (geminiKey) {
     try {
@@ -135,21 +130,23 @@ export async function analyzeEligibility(profile: UserProfile, isDummy: boolean)
       const seen = new Set(filteredDb.map(s => s.yojana_name));
       const combined = [...filteredDb];
       
-      aiResult.eligible_schemes.forEach(s => {
-        if (!seen.has(s.yojana_name)) {
-          combined.push(s);
-          seen.add(s.yojana_name);
-        }
-      });
+      if (aiResult.eligible_schemes && aiResult.eligible_schemes.length > 0) {
+        aiResult.eligible_schemes.forEach(s => {
+          if (!seen.has(s.yojana_name)) {
+            combined.push(s);
+            seen.add(s.yojana_name);
+          }
+        });
+      }
       
       const finalResult = { ...aiResult, eligible_schemes: combined };
       await dbService.saveCache(profileHash, finalResult);
       return finalResult;
     } catch (e) {
       console.warn("AI logic failed, falling back to database results", e);
-      return { hindiContent: "डेटाबेस से प्राप्त परिणाम (पात्रता विश्लेषण हेतु):", eligible_schemes: filteredDb };
+      return { hindiContent: "डेटाबेस से प्राप्त परिणाम (AI त्रुटि):", eligible_schemes: filteredDb };
     }
   }
 
-  return { hindiContent: "डेटाबेस से प्राप्त परिणाम (AI सक्रिय नहीं है):", eligible_schemes: filteredDb };
+  return { hindiContent: "डेटाबेस से प्राप्त परिणाम (कृपया Admin में API Key सेट करें या Vercel में जोड़ें):", eligible_schemes: filteredDb };
 }
