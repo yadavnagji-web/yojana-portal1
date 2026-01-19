@@ -2,7 +2,7 @@
 import { Scheme, UserProfile, AnalysisResponse, CachedAnalysis } from "../types";
 
 const DB_NAME = "SarkariYojanaMasterDB";
-const DB_VERSION = 14; 
+const DB_VERSION = 15; // Incremented version for robust structure
 const SCHEME_STORE = "schemes";
 const SETTINGS_STORE = "settings";
 const CACHE_STORE = "analysis_cache";
@@ -131,17 +131,20 @@ export class DBService {
 
       request.onupgradeneeded = (event) => {
         const db = (event.target as IDBOpenDBRequest).result;
-        if (db.objectStoreNames.contains(SCHEME_STORE)) db.deleteObjectStore(SCHEME_STORE);
-        db.createObjectStore(SCHEME_STORE, { keyPath: "yojana_name" });
-
-        if (db.objectStoreNames.contains(SETTINGS_STORE)) db.deleteObjectStore(SETTINGS_STORE);
-        db.createObjectStore(SETTINGS_STORE);
-
-        if (db.objectStoreNames.contains(CACHE_STORE)) db.deleteObjectStore(CACHE_STORE);
-        db.createObjectStore(CACHE_STORE, { keyPath: "profileHash" });
-
-        if (db.objectStoreNames.contains(USER_RECORDS_STORE)) db.deleteObjectStore(USER_RECORDS_STORE);
-        db.createObjectStore(USER_RECORDS_STORE, { autoIncrement: true });
+        
+        // Robust update: Create only if missing to prevent data loss on every version bump
+        if (!db.objectStoreNames.contains(SCHEME_STORE)) {
+          db.createObjectStore(SCHEME_STORE, { keyPath: "yojana_name" });
+        }
+        if (!db.objectStoreNames.contains(SETTINGS_STORE)) {
+          db.createObjectStore(SETTINGS_STORE);
+        }
+        if (!db.objectStoreNames.contains(CACHE_STORE)) {
+          db.createObjectStore(CACHE_STORE, { keyPath: "profileHash" });
+        }
+        if (!db.objectStoreNames.contains(USER_RECORDS_STORE)) {
+          db.createObjectStore(USER_RECORDS_STORE, { autoIncrement: true });
+        }
       };
 
       request.onsuccess = async (e) => { 
@@ -178,11 +181,28 @@ export class DBService {
   }
 
   public async getSetting<T>(key: string): Promise<T | null> {
+    // Priority 1: IndexedDB
     if (!this.db) await this.init();
     return new Promise((resolve) => {
       const tx = this.db!.transaction(SETTINGS_STORE, "readonly");
       const req = tx.objectStore(SETTINGS_STORE).get(key);
-      req.onsuccess = () => resolve(req.result || null);
+      req.onsuccess = () => {
+        if (req.result) resolve(req.result);
+        else {
+          // Priority 2: LocalStorage Backup (especially for API keys)
+          const backup = localStorage.getItem(`backup_${key}`);
+          if (backup) {
+            try {
+              const parsed = JSON.parse(backup);
+              // Restore to IndexedDB if found in backup
+              this.setSetting(key, parsed);
+              resolve(parsed);
+            } catch(e) { resolve(null); }
+          } else {
+            resolve(null);
+          }
+        }
+      };
       req.onerror = () => resolve(null);
     });
   }
@@ -191,6 +211,10 @@ export class DBService {
     if (!this.db) await this.init();
     const tx = this.db!.transaction(SETTINGS_STORE, "readwrite");
     tx.objectStore(SETTINGS_STORE).put(value, key);
+    // Extra safety: Backup API keys and critical settings to localStorage
+    if (key === 'api_keys' || key === 'auth_session') {
+      localStorage.setItem(`backup_${key}`, JSON.stringify(value));
+    }
   }
 
   public async getAllSchemes(): Promise<Scheme[]> {

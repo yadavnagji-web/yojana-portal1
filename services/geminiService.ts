@@ -23,7 +23,7 @@ const SYSTEM_INSTRUCTION = `आप भारत सरकार और राज
       "eligibility_reason_hindi": "पात्रता या सशर्त पात्रता का ठोस तर्क",
       "required_documents": ["दस्तावेज 1", "दस्तावेज 2"],
       "official_pdf_link": "योजना का लिंक",
-      ...अन्य आवश्यक फील्ड
+      ...अन्य फील्ड
     }
   ]
 }
@@ -33,16 +33,19 @@ JSON को ---JSON_START--- और ---JSON_END--- के बीच रखें
 function robustJsonParse(text: string): any {
   if (!text) return null;
   try {
+    // Strategy 1: Explicit tags
     const tagged = text.match(/---JSON_START---([\s\S]*?)---JSON_END---/);
     if (tagged) {
       const parsed = JSON.parse(tagged[1].trim());
       return parsed.eligible_schemes || (Array.isArray(parsed) ? parsed : null);
     }
+    // Strategy 2: Markdown block
     const md = text.match(/```json\s*([\s\S]*?)\s*```/i);
     if (md) {
       const parsed = JSON.parse(md[1].trim());
       return parsed.eligible_schemes || (Array.isArray(parsed) ? parsed : null);
     }
+    // Strategy 3: Search for first { and last }
     const startIdx = text.indexOf('{');
     const endIdx = text.lastIndexOf('}');
     if (startIdx !== -1 && endIdx !== -1) {
@@ -50,7 +53,7 @@ function robustJsonParse(text: string): any {
       return parsed.eligible_schemes || (Array.isArray(parsed) ? parsed : null);
     }
   } catch (e) {
-    console.error("AI JSON Parse Error:", e);
+    console.error("AI JSON Parse Error (Robust):", e);
   }
   return null;
 }
@@ -62,7 +65,7 @@ export async function testApiConnection(provider: 'gemini' | 'groq', key: string
       const ai = new GoogleGenAI({ apiKey: key });
       const response = await ai.models.generateContent({
         model: 'gemini-3-flash-preview',
-        contents: 'test',
+        contents: 'test connection, respond "ok"',
       });
       return !!response.text;
     } else {
@@ -85,6 +88,7 @@ async function analyzeWithGemini(profile: UserProfile, key: string): Promise<Ana
   const prompt = `उपयोगकर्ता प्रोफाइल डेटा: ${JSON.stringify(profile)}.
   कृपया 20 योजनाओं की सूची दें। समावेशिता (Inclusivity) सुनिश्चित करें। 
   सशर्त पात्र (Conditional) योजनाओं को स्पष्ट तर्क के साथ जोड़ें। 
+  बीमा योजनाओं (APY, PMJJBY, PMSBY) को केवल 2-3 तक ही सीमित रखें। 
   विशेष रूप से राजस्थान के मेधावी स्नातक छात्रों और ग्रामीण महिलाओं के लिए योजनाओं पर ध्यान दें।`;
   
   const res = await ai.models.generateContent({
@@ -113,11 +117,9 @@ export async function analyzeEligibility(profile: UserProfile, isDummy: boolean)
 
   const dbSchemes = await dbService.getAllSchemes();
   
-  // Local DB filter (Accuracy check)
+  // Local DB filter (Basic relevance check)
   const filteredDb = dbSchemes.filter(s => {
-    // Basic state check
     if (s.government === 'Rajasthan Govt' && profile.state !== 'Rajasthan') return false;
-    // Gender check (for women specific schemes in DB)
     if (s.yojana_name.includes("महिला") || s.yojana_name.includes("छात्रा") || s.category.includes("Women")) {
        if (profile.gender === 'Male') return false;
     }
