@@ -213,23 +213,35 @@ const SchemesTable: React.FC<{ schemes: Scheme[] }> = ({ schemes }) => {
                 {isExpanded && (
                   <tr className="bg-blue-50/20">
                     <td colSpan={4} className="p-8">
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-10 animate-slide-up">
-                        <div className="space-y-4">
-                          <h4 className="text-[10px] font-black text-blue-600 uppercase tracking-widest">आवेदन रोडमैप</h4>
-                          <div className="space-y-3 bg-white p-5 rounded-2xl border border-blue-100 shadow-sm">
-                            <div><p className="text-[9px] font-black text-slate-400 uppercase">हस्ताक्षर</p><p className="text-xs font-bold text-slate-800">{Array.isArray(scheme?.signatures_required) ? scheme.signatures_required.join(", ") : (scheme?.signatures_required || "स्वयं")}</p></div>
-                            <div><p className="text-[9px] font-black text-slate-400 uppercase">जमा स्थान</p><p className="text-xs font-bold text-slate-800">{scheme?.submission_point || 'ई-मित्र / कार्यालय'}</p></div>
-                            <div><p className="text-[9px] font-black text-slate-400 uppercase">प्रक्रिया</p><p className="text-xs font-bold text-slate-800">{scheme?.application_type || 'ऑनलाइन'}</p></div>
+                      <div className="space-y-8 animate-slide-up">
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-10">
+                          <div className="space-y-4">
+                            <h4 className="text-[10px] font-black text-blue-600 uppercase tracking-widest">आवेदन रोडमैप</h4>
+                            <div className="space-y-3 bg-white p-5 rounded-2xl border border-blue-100 shadow-sm">
+                              <div><p className="text-[9px] font-black text-slate-400 uppercase">हस्ताक्षर</p><p className="text-xs font-bold text-slate-800">{Array.isArray(scheme?.signatures_required) ? scheme.signatures_required.join(", ") : (scheme?.signatures_required || "स्वयं")}</p></div>
+                              <div><p className="text-[9px] font-black text-slate-400 uppercase">जमा स्थान</p><p className="text-xs font-bold text-slate-800">{scheme?.submission_point || 'ई-मित्र / कार्यालय'}</p></div>
+                              <div><p className="text-[9px] font-black text-slate-400 uppercase">प्रक्रिया</p><p className="text-xs font-bold text-slate-800">{scheme?.application_type || 'ऑनलाइन'}</p></div>
+                            </div>
+                          </div>
+                          <div className="space-y-4">
+                            <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">दस्तावेज़</h4>
+                            <ul className="space-y-2">{Array.isArray(scheme?.required_documents) ? scheme.required_documents.map((doc, i) => (<li key={i} className="text-[11px] font-bold text-slate-600 flex items-center gap-3 bg-white p-3 rounded-xl border border-slate-100"><span className="w-2 h-2 bg-blue-500 rounded-full shrink-0"></span> {doc}</li>)) : <li className="text-[11px] font-bold text-slate-600">जानकारी उपलब्ध नहीं</li>}</ul>
+                          </div>
+                          <div className="space-y-4">
+                            <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">पात्रता तर्क</h4>
+                            <div className="bg-white p-5 rounded-2xl border border-slate-100 italic text-xs text-slate-600 font-bold leading-relaxed mb-4">"{scheme?.eligibility_reason_hindi || 'आपकी प्रोफाइल इस योजना के मानदंडों को पूरा करती है।'}"</div>
+                            <a href={scheme?.official_pdf_link && scheme.official_pdf_link !== "#" ? scheme.official_pdf_link : "https://www.google.com/search?q=" + encodeURIComponent(scheme?.yojana_name || '')} target="_blank" rel="noreferrer" className="block w-full py-4 bg-slate-900 text-white text-center rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-black transition-all shadow-lg">आधिकारिक पोर्टल</a>
                           </div>
                         </div>
-                        <div className="space-y-4">
-                          <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">दस्तावेज़</h4>
-                          <ul className="space-y-2">{Array.isArray(scheme?.required_documents) ? scheme.required_documents.map((doc, i) => (<li key={i} className="text-[11px] font-bold text-slate-600 flex items-center gap-3 bg-white p-3 rounded-xl border border-slate-100"><span className="w-2 h-2 bg-blue-500 rounded-full shrink-0"></span> {doc}</li>)) : <li className="text-[11px] font-bold text-slate-600">जानकारी उपलब्ध नहीं</li>}</ul>
-                        </div>
-                        <div className="space-y-4">
-                          <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">पात्रता तर्क</h4>
-                          <div className="bg-white p-5 rounded-2xl border border-slate-100 italic text-xs text-slate-600 font-bold leading-relaxed mb-4">"{scheme?.eligibility_reason_hindi || 'आपकी प्रोफाइल इस योजना के मानदंडों को पूरा करती है।'}"</div>
-                          <a href={scheme?.official_pdf_link && scheme.official_pdf_link !== "#" ? scheme.official_pdf_link : "https://www.google.com/search?q=" + encodeURIComponent(scheme?.yojana_name || '')} target="_blank" rel="noreferrer" className="block w-full py-4 bg-slate-900 text-white text-center rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-black transition-all shadow-lg">आधिकारिक पोर्टल</a>
+
+                        {/* NEW SECTION: How to Become Eligible for Other Schemes */}
+                        <div className="bg-amber-50 p-6 rounded-3xl border border-amber-100 shadow-sm">
+                          <h4 className="text-[10px] font-black text-amber-600 uppercase tracking-widest mb-3 flex items-center gap-2">
+                            <span className="text-sm">💡</span> अन्य योजनाओं हेतु पात्रता सुझाव (How to Qualify for More)
+                          </h4>
+                          <div className="text-xs font-bold text-slate-700 leading-relaxed bg-white/60 p-4 rounded-xl border border-amber-50">
+                            {scheme?.other_eligibility_suggestions_hindi || "अधिक सरकारी लाभों के लिए अपने 'जन-आधार' डेटा को अद्यतन रखें, आय प्रमाण पत्र को हर 6 माह में नवीनीकृत करें और सुनिश्चित करें कि आपका बैंक खाता आधार (DBT) से लिंक है। संबंधित श्रेणियों के प्रमाण पत्र तैयार रखें।"}
+                          </div>
                         </div>
                       </div>
                     </td>

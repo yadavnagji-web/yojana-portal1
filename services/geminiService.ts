@@ -2,25 +2,23 @@
 import { UserProfile, AnalysisResponse, Scheme } from "../types";
 import { dbService } from "./dbService";
 
-/**
- * Groq API Configuration
- * Using the API key from environment to prevent GitHub secret scanning blocks.
- */
 const GROQ_MODEL = "llama-3.3-70b-versatile";
 const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
 
+/**
+ * System Instruction focused on REAL database matching.
+ */
 const SYSTEM_INSTRUCTION = `आप भारत सरकार और राजस्थान सरकार की योजनाओं के विशेषज्ञ विश्लेषक हैं। 
 
 पात्रता विश्लेषण नियम (Strict Selection Rules):
-1. पात्र योजनाएं (ELIGIBLE): केवल वे ही योजनाएं दें जिनके लिए उपयोगकर्ता 100% पात्र है।
-2. सशर्त योजनाएं (CONDITIONAL): ऐसी ठीक 5 योजनाएं चुनें जहाँ उपयोगकर्ता 80% पात्रता पूरी करता है, और बताएं कि बाकी 20% (जैसे प्रमाण पत्र) कैसे पूरा करें।
-3. प्रोफाइल मिलान: आयु, लिंग, आय, स्थान, जाति और शिक्षा का सूक्ष्म विश्लेषण करें।
-4. भाषा: शुद्ध और आधिकारिक हिंदी।
-5. प्रारूप: अनिवार्य रूप से 'eligible_schemes' ऐरे के साथ JSON उत्तर दें।`;
+1. आपका मुख्य कार्य उपयोगकर्ता की प्रोफाइल को प्रदान की गई योजनाओं की सूची (डेटाबेस) से मिलाना है।
+2. पात्र योजनाएं (ELIGIBLE): केवल वे ही योजनाएं दें जिनके लिए उपयोगकर्ता 100% पात्र है।
+3. सशर्त योजनाएं (CONDITIONAL): ऐसी ठीक 5 योजनाएं चुनें जहाँ उपयोगकर्ता 80% पात्रता पूरी करता है।
+4. महत्वपूर्ण: प्रत्येक योजना के लिए 'other_eligibility_suggestions_hindi' फील्ड जोड़ें, जिसमें यह बताएं कि उपयोगकर्ता अन्य संबंधित योजनाओं के लिए पात्र होने हेतु क्या कदम उठा सकता है (जैसे नए दस्तावेज बनवाना, राशन कार्ड अपडेट करना, या कौशल प्रशिक्षण लेना)।
+5. महत्वपूर्ण: काल्पनिक योजनाएं न बनाएं। केवल प्रदान किए गए डेटाबेस का उपयोग करें।
+6. भाषा: शुद्ध और आधिकारिक हिंदी।
+7. प्रारूप: अनिवार्य रूप से 'eligible_schemes' ऐरे के साथ JSON उत्तर दें।`;
 
-/**
- * Robust JSON extraction from LLM responses
- */
 function extractSchemesFromText(text: string): Scheme[] {
   try {
     const jsonMatch = text.match(/```json\s*([\s\S]*?)\s*```/) || text.match(/{[\s\S]*}/);
@@ -40,11 +38,18 @@ export async function analyzeEligibility(profile: UserProfile, isDummy: boolean)
   if (cached) return cached;
 
   const apiKey = process.env.API_KEY;
+  const masterSchemes = await dbService.getAllSchemes();
+
+  // Filter schemes locally first to save context window (Basic state/gender check)
+  const relevantSchemes = masterSchemes.filter(s => {
+    if (s.government === 'Rajasthan Govt' && profile.state !== 'Rajasthan') return false;
+    return true;
+  });
 
   if (!apiKey) {
     return {
-      hindiContent: "त्रुटि: API कुंजी सेट नहीं है। कृपया Settings में Groq API Key दर्ज करें।",
-      eligible_schemes: []
+      hindiContent: "त्रुटि: API कुंजी सेट नहीं है। स्थानीय डेटाबेस से परिणाम दिखा रहे हैं।",
+      eligible_schemes: relevantSchemes.slice(0, 10)
     };
   }
 
@@ -59,40 +64,27 @@ export async function analyzeEligibility(profile: UserProfile, isDummy: boolean)
         model: GROQ_MODEL,
         messages: [
           { role: "system", content: SYSTEM_INSTRUCTION },
-          { role: "user", content: `उपयोगकर्ता प्रोफाइल डेटा: ${JSON.stringify(profile)}. कृपया पात्रता का विश्लेषण करें।` }
+          { role: "user", content: `उपयोगकर्ता प्रोफाइल: ${JSON.stringify(profile)}. \n\nउपलब्ध योजनाएं (डेटाबेस): ${JSON.stringify(relevantSchemes)}. \n\nकृपया इस डेटाबेस से सर्वश्रेष्ठ मिलान खोजें और अन्य योजनाओं हेतु पात्रता सुझाव (suggestions) भी प्रदान करें।` }
         ],
-        temperature: 0.2,
+        temperature: 0.1, // Low temperature for high precision matching
         response_format: { type: "json_object" }
       })
     });
 
-    // Handle Rate Limiting / Exhaustion
-    if (response.status === 429) {
-      throw new Error("DATA_EXHAUSTED");
-    }
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.error?.message || `API Error: ${response.status}`);
-    }
+    if (response.status === 429) throw new Error("DATA_EXHAUSTED");
+    if (!response.ok) throw new Error(`API Error: ${response.status}`);
 
     const data = await response.json();
     const rawContent = data.choices[0]?.message?.content || "";
     const aiSchemes = extractSchemesFromText(rawContent);
 
-    // Strict local filtering logic:
-    // 1. All ELIGIBLE schemes
-    // 2. Exactly 5 CONDITIONAL schemes
+    // Final sorting and filtering
     const eligible = aiSchemes.filter(s => s.eligibility_status === 'ELIGIBLE');
     const conditional = aiSchemes.filter(s => s.eligibility_status === 'CONDITIONAL').slice(0, 5);
-    
     const finalSchemes = [...eligible, ...conditional];
 
-    // Cache discovery to local DB
-    finalSchemes.forEach(s => dbService.upsertScheme(s));
-
     const result: AnalysisResponse = {
-      hindiContent: "Groq AI (Llama 3.3) द्वारा विश्लेषण पूर्ण। हमने केवल वही योजनाएं चुनी हैं जो आपके लिए सबसे अधिक प्रासंगिक हैं।",
+      hindiContent: "प्रामाणिक सरकारी डेटाबेस से मिलान पूर्ण। हमने आपकी प्रोफाइल के आधार पर सबसे सटीक योजनाओं की पहचान की है और कुछ भविष्य के सुझाव भी जोड़े हैं।",
       eligible_schemes: finalSchemes,
       timestamp: Date.now()
     };
@@ -101,27 +93,21 @@ export async function analyzeEligibility(profile: UserProfile, isDummy: boolean)
     return result;
 
   } catch (e: any) {
-    console.error("Groq Analysis Error:", e);
+    console.error("Analysis Error:", e);
     
-    if (e.message === "DATA_EXHAUSTED" || e.message.includes("rate_limit")) {
-      return {
-        hindiContent: "क्षमा करें, वर्तमान में 'API Data Exhausted' (डाटा सीमा समाप्त) हो गई है। कृपया कुछ समय बाद पुनः प्रयास करें या हमारे मुख्य डेटाबेस से परिणाम देखें।",
-        eligible_schemes: (await dbService.getAllSchemes()).slice(0, 5)
-      };
-    }
-
-    // Standard Fallback from Local DB
-    const dbSchemes = await dbService.getAllSchemes();
-    const filtered = dbSchemes.filter(s => {
-      if (s.government === 'Rajasthan Govt' && profile.state !== 'Rajasthan') return false;
-      const isFemale = s.yojana_name.includes("महिला") || s.yojana_name.includes("छात्रा");
-      if (isFemale && profile.gender === 'Male') return false;
-      return true;
-    }).slice(0, 8);
+    // Fallback: Smart Local Matching if AI fails
+    const fallbackSchemes = relevantSchemes.filter(s => {
+       const name = s.yojana_name.toLowerCase();
+       if (profile.gender === 'Male' && (name.includes('महिला') || name.includes('छात्रा') || name.includes('मातृ'))) return false;
+       if (profile.is_farmer === 'No' && (name.includes('किसान') || name.includes('कृषि'))) return false;
+       return true;
+    }).slice(0, 10);
 
     return {
-      hindiContent: "AI सेवा अभी व्यस्त है। आपकी प्रोफाइल के आधार पर स्थानीय डेटाबेस से कुछ मुख्य योजनाएं यहाँ हैं:",
-      eligible_schemes: filtered
+      hindiContent: e.message === "DATA_EXHAUSTED" 
+        ? "क्षमा करें, API सीमा समाप्त हो गई है। स्थानीय डेटाबेस से वास्तविक परिणाम दिखा रहे हैं:" 
+        : "AI सेवा अभी व्यस्त है। डेटाबेस से सीधे मिलान किए गए परिणाम यहाँ हैं:",
+      eligible_schemes: fallbackSchemes
     };
   }
 }

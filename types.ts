@@ -21,6 +21,9 @@ export interface Scheme {
   
   scheme_status: 'NEW' | 'ACTIVE' | 'EXPIRED';
   rules_json?: any;
+
+  // New field for suggestions
+  other_eligibility_suggestions_hindi?: string;
 }
 
 export interface UserProfile {
